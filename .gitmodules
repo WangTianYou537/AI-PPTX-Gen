@@ -1,0 +1,3 @@
+[submodule "fronted"]
+	path = fronted
+	url = git@github.com:WangTianYou537/AI-PPTX-Gen-Fronted.git
