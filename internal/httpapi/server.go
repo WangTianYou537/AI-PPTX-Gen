@@ -8,12 +8,18 @@ import (
 )
 
 func NewServer(appStore store.Store) http.Handler {
-	server := New(appStore)
+	return NewServerWithStoreManager(NewStoreManager(appStore, store.Config{Kind: store.StorageJSON, Path: "data/app.json"}, store.DefaultConfigPath()))
+}
+
+func NewServerWithStoreManager(manager *StoreManager) http.Handler {
+	server := NewWithStoreManager(manager)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", server.handleHealth)
 	mux.HandleFunc("/api/setup/status", server.handleSetupStatus)
 	mux.HandleFunc("/api/setup/admin", server.handleSetupAdmin)
+	mux.HandleFunc("/api/setup/storage/test", server.handleSetupStorageTest)
 	mux.HandleFunc("/api/auth/login", server.handleLogin)
+	mux.HandleFunc("/api/auth/register", server.handleRegister)
 	mux.HandleFunc("/api/auth/logout", server.handleLogout)
 	mux.HandleFunc("/api/auth/me", server.handleMe)
 	mux.HandleFunc("/api/architect", server.withUser(server.handleArchitect))
@@ -23,8 +29,11 @@ func NewServer(appStore store.Store) http.Handler {
 	mux.HandleFunc("/api/admin/users/", server.withAdmin(server.handleAdminUser))
 	mux.HandleFunc("/api/admin/prompts", server.withAdmin(server.handleAdminPrompts))
 	mux.HandleFunc("/api/admin/prompts/reset", server.withAdmin(server.handleAdminPromptsReset))
+	mux.HandleFunc("/api/admin/storage", server.withAdmin(server.handleAdminStorage))
+	mux.HandleFunc("/api/admin/storage/test", server.withAdmin(server.handleAdminStorageTest))
+	mux.HandleFunc("/api/admin/storage/switch", server.withAdmin(server.handleAdminStorageSwitch))
 	mux.Handle("/", web.Handler())
-	return withCORS(mux)
+	return withRequestLogging(withCORS(mux))
 }
 
 func withCORS(next http.Handler) http.Handler {

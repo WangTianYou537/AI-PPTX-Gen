@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -20,16 +21,38 @@ func (s *Server) currentUser(r *http.Request) (store.User, bool) {
 }
 
 func (s *Server) authenticate(r *http.Request) (store.User, bool) {
+	requestID := requestIDFromContext(r.Context())
 	cookie, err := r.Cookie(s.sessionCookie)
 	if err != nil || cookie.Value == "" {
+		if debugEnabled.Load() {
+			log.Printf("auth failed request_id=%s reason=missing_cookie", requestID)
+		}
 		return store.User{}, false
 	}
 	session, err := s.store.GetSession(r.Context(), auth.HashToken(cookie.Value))
-	if err != nil || session.ExpiresAt.Before(time.Now().UTC()) {
+	if err != nil {
+		if debugEnabled.Load() {
+			log.Printf("auth failed request_id=%s reason=session_lookup err=%v", requestID, err)
+		}
+		return store.User{}, false
+	}
+	if session.ExpiresAt.Before(time.Now().UTC()) {
+		if debugEnabled.Load() {
+			log.Printf("auth failed request_id=%s reason=session_expired user_id=%s", requestID, session.UserID)
+		}
 		return store.User{}, false
 	}
 	user, err := s.store.GetUserByID(r.Context(), session.UserID)
-	if err != nil || user.Disabled {
+	if err != nil {
+		if debugEnabled.Load() {
+			log.Printf("auth failed request_id=%s reason=user_lookup user_id=%s err=%v", requestID, session.UserID, err)
+		}
+		return store.User{}, false
+	}
+	if user.Disabled {
+		if debugEnabled.Load() {
+			log.Printf("auth failed request_id=%s reason=user_disabled user_id=%s", requestID, user.ID)
+		}
 		return store.User{}, false
 	}
 	return user, true

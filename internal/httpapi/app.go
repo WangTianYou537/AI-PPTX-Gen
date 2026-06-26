@@ -8,13 +8,19 @@ import (
 
 type Server struct {
 	store         store.Store
+	stores        *StoreManager
 	sessionCookie string
 	sessionTTL    time.Duration
 }
 
-func New(store store.Store) *Server {
+func New(appStore store.Store) *Server {
+	return NewWithStoreManager(NewStoreManager(appStore, store.Config{Kind: store.StorageJSON, Path: "data/app.json"}, store.DefaultConfigPath()))
+}
+
+func NewWithStoreManager(manager *StoreManager) *Server {
 	return &Server{
-		store:         store,
+		store:         manager,
+		stores:        manager,
 		sessionCookie: "ppt_session",
 		sessionTTL:    7 * 24 * time.Hour,
 	}

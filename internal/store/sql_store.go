@@ -1,9 +1,12 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -14,11 +17,26 @@ type SQLStore struct {
 }
 
 func NewSQLStore(driverName, dsn, dialect string) (*SQLStore, error) {
+	return NewSQLStoreContext(context.Background(), driverName, dsn, dialect)
+}
+
+func NewSQLStoreContext(ctx context.Context, driverName, dsn, dialect string) (*SQLStore, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("%w: missing DSN", ErrInvalidStore)
 	}
+	if dialect == "sqlite" {
+		if dir := filepath.Dir(dsn); dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, err
+			}
+		}
+	}
 	db, err := sql.Open(driverName, dsn)
 	if err != nil {
+		return nil, err
+	}
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	store := &SQLStore{db: db, dialect: dialect}

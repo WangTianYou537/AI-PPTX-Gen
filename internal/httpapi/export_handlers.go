@@ -39,7 +39,11 @@ func (s *Server) handleExportPPTX(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(content)
+	if _, err := w.Write(content); err != nil {
+		if debugEnabled.Load() {
+			writeError(w, http.StatusInternalServerError, "写入 PPTX 响应失败: "+err.Error())
+		}
+	}
 }
 
 func safePPTXFilename(title string) string {

@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"time"
 
 	"wty5.cn/ppt-gen/internal/llm"
 	"wty5.cn/ppt-gen/internal/ppt"
@@ -23,7 +25,9 @@ type svgRequest struct {
 }
 
 type errorResponse struct {
-	Error string `json:"error"`
+	Error     string `json:"error"`
+	Detail    string `json:"detail,omitempty"`
+	RequestID string `json:"requestId,omitempty"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -83,11 +87,21 @@ func (s *Server) handleGenerateSVG(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := ppt.SVGResponse{Slides: make([]ppt.SlideSVG, 0, len(input.Outline.Slides))}
-	for _, slide := range input.Outline.Slides {
+	for index, slide := range input.Outline.Slides {
+		started := time.Now()
+		if debugEnabled.Load() {
+			log.Printf("svg slide generation start request_id=%s index=%d total=%d slide_id=%s title=%q provider=%s model=%s", requestIDFromContext(r.Context()), index+1, len(input.Outline.Slides), slide.ID, slide.Title, settings.SVG.ModelConfig.Provider, settings.SVG.ModelConfig.Model)
+		}
 		svg, err := s.generateSlideSVG(r, settings.SVG, input.Outline, slide)
 		if err != nil {
+			if debugEnabled.Load() {
+				log.Printf("svg slide generation failed request_id=%s index=%d total=%d slide_id=%s duration=%s err=%v", requestIDFromContext(r.Context()), index+1, len(input.Outline.Slides), slide.ID, time.Since(started), err)
+			}
 			writeError(w, http.StatusBadGateway, slide.ID+" 生成失败: "+err.Error())
 			return
+		}
+		if debugEnabled.Load() {
+			log.Printf("svg slide generation complete request_id=%s index=%d total=%d slide_id=%s duration=%s svg_bytes=%d", requestIDFromContext(r.Context()), index+1, len(input.Outline.Slides), slide.ID, time.Since(started), len(svg))
 		}
 		response.Slides = append(response.Slides, ppt.SlideSVG{SlideID: slide.ID, Title: slide.Title, SVG: svg})
 	}
@@ -168,6 +182,9 @@ func (s *Server) generateSlideSVG(r *http.Request, settings store.GenerationRole
 		Config:       roleModelConfig(settings.ModelConfig),
 		SystemPrompt: settings.SystemPrompt,
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
+	}
+	if debugEnabled.Load() {
+		log.Printf("llm role request request_id=%s role=svg slide_id=%s provider=%s model=%s base_url=%s prompt_bytes=%d supports_tools=%t", requestIDFromContext(r.Context()), slide.ID, settings.ModelConfig.Provider, settings.ModelConfig.Model, settings.ModelConfig.BaseURL, len(prompt), settings.SupportsTools)
 	}
 	if settings.SupportsTools {
 		req.Tools = []llm.ToolDefinition{showSVGToolDefinition()}
@@ -255,9 +272,22 @@ func handleGenerateError(w http.ResponseWriter, err error) {
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("http json encode error status=%d err=%v", status, err)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, errorResponse{Error: message})
+	detail := ""
+	if debugEnabled.Load() {
+		detail = message
+	}
+	requestID := ""
+	if requestGetter, ok := w.(interface{ Header() http.Header }); ok {
+		requestID = requestGetter.Header().Get("X-Request-ID")
+	}
+	if debugEnabled.Load() || status >= 500 {
+		log.Printf("http error request_id=%s status=%d error=%s", requestID, status, message)
+	}
+	writeJSON(w, status, errorResponse{Error: message, Detail: detail, RequestID: requestID})
 }

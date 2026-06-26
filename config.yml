@@ -1,0 +1,5 @@
+storage:
+  kind: "json"
+  path: "data/app.json"
+  dsn: ""
+updatedAt: "2026-06-24T03:01:05Z"

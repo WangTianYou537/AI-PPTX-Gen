@@ -62,8 +62,17 @@ func ExportFromSVGSlides(ctx context.Context, title string, slides []ppt.SlideSV
 		}
 	}
 
-	_ = runOfficeCLI(ctx, workDir, "validate", deckPath)
-	return os.ReadFile(deckPath)
+	if err := runOfficeCLI(ctx, workDir, "validate", deckPath); err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(deckPath)
+	if err != nil {
+		return nil, err
+	}
+	if debugEnabled.Load() {
+		log.Printf("pptx export deck=%s bytes=%d", deckPath, len(content))
+	}
+	return content, nil
 }
 
 func runOfficeCLI(ctx context.Context, dir string, args ...string) error {
@@ -79,7 +88,7 @@ func runOfficeCLI(ctx context.Context, dir string, args ...string) error {
 		log.Printf("officecli output=%s", strings.TrimSpace(string(output)))
 	}
 	if cmdCtx.Err() == context.DeadlineExceeded {
-		return errors.New("officecli 执行超时")
+		return fmt.Errorf("officecli command timeout: cwd=%s command=%s", dir, shellCommand("officecli", args...))
 	}
 	if err != nil {
 		message := string(output)

@@ -14,7 +14,9 @@ import (
 	"time"
 )
 
-var defaultHTTPClient = &http.Client{Timeout: 120 * time.Second}
+const llmHTTPTimeout = 10 * time.Minute
+
+var defaultHTTPClient = &http.Client{Timeout: llmHTTPTimeout}
 var debugEnabled atomic.Bool
 
 func SetDebug(enabled bool) {
@@ -56,20 +58,29 @@ func postJSON(ctx context.Context, url string, headers map[string]string, payloa
 		httpReq.Header.Set(key, value)
 	}
 
+	started := time.Now()
 	resp, err := defaultHTTPClient.Do(httpReq)
 	if err != nil {
+		if debugEnabled.Load() {
+			log.Printf("llm request failed method=POST url=%s duration=%s timeout=%s err=%v", url, time.Since(started), llmHTTPTimeout, err)
+			log.Printf("llm debug curl for failed request:\n%s", debugCurlCommand(url, headers, body))
+		}
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if debugEnabled.Load() {
+			log.Printf("llm response read failed method=POST url=%s status=%d duration=%s timeout=%s err=%v", url, resp.StatusCode, time.Since(started), llmHTTPTimeout, err)
+			log.Printf("llm debug curl for failed response read:\n%s", debugCurlCommand(url, headers, body))
+		}
 		return nil, resp.StatusCode, err
 	}
 	if debugEnabled.Load() {
-		log.Printf("llm response status=%d status_text=%q content_length=%d headers=%s body=%s", resp.StatusCode, resp.Status, len(respBody), debugResponseHeaders(resp.Header), debugSnippet(string(respBody)))
-		if resp.StatusCode == http.StatusServiceUnavailable {
-			log.Printf("llm debug curl for 503:\n%s", debugCurlCommand(url, headers, body))
+		log.Printf("llm response status=%d status_text=%q duration=%s content_length=%d headers=%s body=%s", resp.StatusCode, resp.Status, time.Since(started), len(respBody), debugResponseHeaders(resp.Header), debugSnippet(string(respBody)))
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			log.Printf("llm debug curl for non-2xx:\n%s", debugCurlCommand(url, headers, body))
 		}
 	}
 	return respBody, resp.StatusCode, nil
@@ -94,8 +105,13 @@ func postJSONStream(ctx context.Context, url string, headers map[string]string, 
 		httpReq.Header.Set(key, value)
 	}
 
+	started := time.Now()
 	resp, err := defaultHTTPClient.Do(httpReq)
 	if err != nil {
+		if debugEnabled.Load() {
+			log.Printf("llm stream request failed method=POST url=%s duration=%s timeout=%s err=%v", url, time.Since(started), llmHTTPTimeout, err)
+			log.Printf("llm debug curl for failed stream request:\n%s", debugCurlCommand(url, headers, body))
+		}
 		return GenerateResponse{}, 0, nil, err
 	}
 	defer resp.Body.Close()
@@ -103,22 +119,28 @@ func postJSONStream(ctx context.Context, url string, headers map[string]string, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
+			if debugEnabled.Load() {
+				log.Printf("llm stream error response read failed method=POST url=%s status=%d duration=%s timeout=%s err=%v", url, resp.StatusCode, time.Since(started), llmHTTPTimeout, err)
+				log.Printf("llm debug curl for failed stream error response read:\n%s", debugCurlCommand(url, headers, body))
+			}
 			return GenerateResponse{}, resp.StatusCode, nil, err
 		}
 		if debugEnabled.Load() {
-			log.Printf("llm stream response status=%d status_text=%q content_length=%d headers=%s body=%s", resp.StatusCode, resp.Status, len(respBody), debugResponseHeaders(resp.Header), debugSnippet(string(respBody)))
-			if resp.StatusCode == http.StatusServiceUnavailable {
-				log.Printf("llm debug curl for 503:\n%s", debugCurlCommand(url, headers, body))
-			}
+			log.Printf("llm stream response status=%d status_text=%q duration=%s content_length=%d headers=%s body=%s", resp.StatusCode, resp.Status, time.Since(started), len(respBody), debugResponseHeaders(resp.Header), debugSnippet(string(respBody)))
+			log.Printf("llm debug curl for non-2xx:\n%s", debugCurlCommand(url, headers, body))
 		}
 		return GenerateResponse{}, resp.StatusCode, respBody, nil
 	}
 
 	response, raw, err := readOpenAIStream(resp.Body)
 	if debugEnabled.Load() {
-		log.Printf("llm stream response status=%d status_text=%q content_length=%d headers=%s body=%s", resp.StatusCode, resp.Status, len(raw), debugResponseHeaders(resp.Header), debugSnippet(string(raw)))
+		log.Printf("llm stream response status=%d status_text=%q duration=%s content_length=%d headers=%s body=%s", resp.StatusCode, resp.Status, time.Since(started), len(raw), debugResponseHeaders(resp.Header), debugSnippet(string(raw)))
 	}
 	if err != nil {
+		if debugEnabled.Load() {
+			log.Printf("llm stream read failed method=POST url=%s status=%d duration=%s timeout=%s err=%v", url, resp.StatusCode, time.Since(started), llmHTTPTimeout, err)
+			log.Printf("llm debug curl for failed stream read:\n%s", debugCurlCommand(url, headers, body))
+		}
 		return GenerateResponse{}, resp.StatusCode, raw, err
 	}
 	return response, resp.StatusCode, raw, nil

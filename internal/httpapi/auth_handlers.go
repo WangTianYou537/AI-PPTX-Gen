@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -12,12 +13,16 @@ import (
 )
 
 type authRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string       `json:"email"`
+	Password string       `json:"password"`
+	Storage  store.Config `json:"storage"`
 }
 
 type setupStatusResponse struct {
-	NeedsSetup bool `json:"needsSetup"`
+	NeedsSetup        bool                  `json:"needsSetup"`
+	StorageConfigured bool                  `json:"storageConfigured"`
+	Storage           *store.Config         `json:"storage,omitempty"`
+	SupportedStorage  []store.StorageOption `json:"supportedStorage"`
 }
 
 type meResponse struct {
@@ -29,18 +34,66 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	needsSetup, err := s.store.NeedsSetup(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	currentConfig, storageConfigured := s.stores.Config()
+	needsSetup := true
+	if storageConfigured {
+		var err error
+		needsSetup, err = s.store.NeedsSetup(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	var storagePtr *store.Config
+	if storageConfigured {
+		storagePtr = &currentConfig
+	}
+	writeJSON(w, http.StatusOK, setupStatusResponse{
+		NeedsSetup:        needsSetup,
+		StorageConfigured: storageConfigured,
+		Storage:           storagePtr,
+		SupportedStorage:  store.SupportedStorageOptions(),
+	})
+}
+
+func (s *Server) handleSetupStorageTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, http.StatusOK, setupStatusResponse{NeedsSetup: needsSetup})
+	var input struct {
+		Storage store.Config `json:"storage"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
+		return
+	}
+	if err := s.stores.TestConfig(r.Context(), input.Storage); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
+	}
+	var input authRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
+		return
+	}
+	if _, ok := s.stores.Current(); !ok {
+		if input.Storage.Kind == "" {
+			writeError(w, http.StatusBadRequest, "请选择数据存储方式")
+			return
+		}
+		if err := s.stores.ConfigureInitial(r.Context(), input.Storage); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	needsSetup, err := s.store.NeedsSetup(r.Context())
 	if err != nil {
@@ -49,11 +102,6 @@ func (s *Server) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !needsSetup {
 		writeError(w, http.StatusForbidden, "系统已经完成安装")
-		return
-	}
-	var input authRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
 		return
 	}
 	user, token, err := s.createUserAndSession(r, input.Email, input.Password, store.RoleAdmin)
@@ -94,13 +142,43 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, meResponse{User: user})
 }
 
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	needsSetup, err := s.store.NeedsSetup(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if needsSetup {
+		writeError(w, http.StatusForbidden, "请先完成管理员初始化")
+		return
+	}
+	var input authRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
+		return
+	}
+	user, token, err := s.createUserAndSession(r, input.Email, input.Password, store.RoleUser)
+	if err != nil {
+		handleAuthError(w, err)
+		return
+	}
+	s.setSessionCookie(w, token)
+	writeJSON(w, http.StatusOK, meResponse{User: user})
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	if cookie, err := r.Cookie(s.sessionCookie); err == nil && cookie.Value != "" {
-		_ = s.store.DeleteSession(r.Context(), auth.HashToken(cookie.Value))
+		if err := s.store.DeleteSession(r.Context(), auth.HashToken(cookie.Value)); err != nil && debugEnabled.Load() {
+			log.Printf("logout delete session failed request_id=%s err=%v", requestIDFromContext(r.Context()), err)
+		}
 	}
 	s.clearSessionCookie(w)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
