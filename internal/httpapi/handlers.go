@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"wty5.cn/ppt-gen/internal/llm"
@@ -102,25 +104,19 @@ func (s *Server) handleGenerateSVG(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	concurrency, source, groupID, groupName, err := s.effectiveSlideConcurrency(r.Context(), user, len(input.Outline.Slides))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if debugEnabled.Load() {
+		log.Printf("svg generation concurrency request_id=%s total=%d concurrency=%d source=%s user_id=%s group_id=%s group_name=%q", requestIDFromContext(r.Context()), len(input.Outline.Slides), concurrency, source, user.ID, groupID, groupName)
+	}
 
-	response := ppt.SVGResponse{Slides: make([]ppt.SlideSVG, 0, len(input.Outline.Slides))}
-	for index, slide := range input.Outline.Slides {
-		started := time.Now()
-		if debugEnabled.Load() {
-			log.Printf("svg slide generation start request_id=%s index=%d total=%d slide_id=%s title=%q provider=%s model=%s", requestIDFromContext(r.Context()), index+1, len(input.Outline.Slides), slide.ID, slide.Title, settings.SVG.ModelConfig.Provider, settings.SVG.ModelConfig.Model)
-		}
-		svg, err := s.generateSlideSVG(r, settings.SVG, input.Outline, slide)
-		if err != nil {
-			if debugEnabled.Load() {
-				log.Printf("svg slide generation failed request_id=%s index=%d total=%d slide_id=%s duration=%s err=%v", requestIDFromContext(r.Context()), index+1, len(input.Outline.Slides), slide.ID, time.Since(started), err)
-			}
-			writeError(w, http.StatusBadGateway, slide.ID+" 生成失败: "+err.Error())
-			return
-		}
-		if debugEnabled.Load() {
-			log.Printf("svg slide generation complete request_id=%s index=%d total=%d slide_id=%s duration=%s svg_bytes=%d", requestIDFromContext(r.Context()), index+1, len(input.Outline.Slides), slide.ID, time.Since(started), len(svg))
-		}
-		response.Slides = append(response.Slides, ppt.SlideSVG{SlideID: slide.ID, Title: slide.Title, SVG: svg})
+	response := ppt.SVGResponse{Slides: make([]ppt.SlideSVG, len(input.Outline.Slides))}
+	if err := s.generateSlideSVGs(r, settings.SVG, input.Outline, response.Slides, concurrency); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
 	}
 	quota, err := s.store.CommitDailyQuota(r.Context(), reservation, len(response.Slides))
 	if err != nil {
@@ -130,6 +126,124 @@ func (s *Server) handleGenerateSVG(w http.ResponseWriter, r *http.Request) {
 	releaseReservation = false
 	response.Quota = quota
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) effectiveSlideConcurrency(ctx context.Context, user store.User, slideCount int) (int, string, string, string, error) {
+	settings, err := s.store.GetSystemSettings(ctx)
+	if err != nil {
+		return 0, "", "", "", err
+	}
+	group, err := s.store.GetUserGroup(ctx, user.GroupID)
+	if err != nil {
+		group, err = s.store.GetUserGroup(ctx, settings.DefaultUserGroupID)
+		if err != nil {
+			group, err = s.store.GetUserGroup(ctx, store.DefaultUserGroupID)
+			if err != nil {
+				return 0, "", "", "", err
+			}
+		}
+	}
+	limit := settings.DefaultSlideConcurrencyLimit
+	source := "system"
+	if group.SlideConcurrencyLimit > 0 {
+		limit = group.SlideConcurrencyLimit
+		source = store.QuotaSourceGroup
+	}
+	if user.SlideConcurrencyLimit != nil {
+		limit = *user.SlideConcurrencyLimit
+		source = store.QuotaSourceUser
+	}
+	limit = clampSlideConcurrency(limit, slideCount)
+	return limit, source, group.ID, group.Name, nil
+}
+
+func clampSlideConcurrency(limit, slideCount int) int {
+	if limit < 1 {
+		limit = store.DefaultSlideConcurrencyLimit
+	}
+	if limit > store.MaxSlideConcurrencyLimit {
+		limit = store.MaxSlideConcurrencyLimit
+	}
+	if slideCount > 0 && limit > slideCount {
+		limit = slideCount
+	}
+	if limit < 1 {
+		return 1
+	}
+	return limit
+}
+
+type slideJob struct {
+	index int
+	slide ppt.SlideOutline
+}
+
+type slideResult struct {
+	index int
+	slide ppt.SlideOutline
+	svg   string
+	err   error
+}
+
+func (s *Server) generateSlideSVGs(r *http.Request, settings store.GenerationRoleSettings, outline ppt.PresentationOutline, slides []ppt.SlideSVG, concurrency int) error {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	jobs := make(chan slideJob)
+	results := make(chan slideResult)
+	var wg sync.WaitGroup
+	worker := func() {
+		defer wg.Done()
+		for job := range jobs {
+			started := time.Now()
+			if debugEnabled.Load() {
+				log.Printf("svg slide generation start request_id=%s index=%d total=%d slide_id=%s title=%q provider=%s model=%s", requestIDFromContext(r.Context()), job.index+1, len(outline.Slides), job.slide.ID, job.slide.Title, settings.ModelConfig.Provider, settings.ModelConfig.Model)
+			}
+			svg, err := s.generateSlideSVG(r.WithContext(ctx), settings, outline, job.slide)
+			if err != nil {
+				if debugEnabled.Load() {
+					log.Printf("svg slide generation failed request_id=%s index=%d total=%d slide_id=%s duration=%s err=%v", requestIDFromContext(r.Context()), job.index+1, len(outline.Slides), job.slide.ID, time.Since(started), err)
+				}
+				results <- slideResult{index: job.index, slide: job.slide, err: err}
+				continue
+			}
+			if debugEnabled.Load() {
+				log.Printf("svg slide generation complete request_id=%s index=%d total=%d slide_id=%s duration=%s svg_bytes=%d", requestIDFromContext(r.Context()), job.index+1, len(outline.Slides), job.slide.ID, time.Since(started), len(svg))
+			}
+			results <- slideResult{index: job.index, slide: job.slide, svg: svg}
+		}
+	}
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go worker()
+	}
+	go func() {
+		defer close(jobs)
+		for index, slide := range outline.Slides {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- slideJob{index: index, slide: slide}:
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var firstErr error
+	for result := range results {
+		if result.err != nil {
+			if firstErr == nil {
+				firstErr = errors.New(result.slide.ID + " 生成失败: " + result.err.Error())
+				cancel()
+			}
+			continue
+		}
+		slides[result.index] = ppt.SlideSVG{SlideID: result.slide.ID, Title: result.slide.Title, SVG: result.svg}
+	}
+	return firstErr
 }
 
 func (s *Server) generateOutline(r *http.Request, settings store.GenerationRoleSettings, input architectRequest) (ppt.PresentationOutline, error) {

@@ -12,34 +12,39 @@ const (
 	DefaultUserGroupID = "default"
 	QuotaSourceUser    = "user"
 	QuotaSourceGroup   = "group"
+
+	DefaultSlideConcurrencyLimit = 2
+	MaxSlideConcurrencyLimit     = 10
 )
 
 type User struct {
-	ID              string    `json:"id"`
-	Email           string    `json:"email"`
-	Username        string    `json:"username"`
-	PasswordHash    string    `json:"-"`
-	Role            string    `json:"role"`
-	Disabled        bool      `json:"disabled"`
-	GroupID         string    `json:"groupId"`
-	DailyPPTLimit   *int      `json:"dailyPPTLimit,omitempty"`
-	DailySlideLimit *int      `json:"dailySlideLimit,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID                    string    `json:"id"`
+	Email                 string    `json:"email"`
+	Username              string    `json:"username"`
+	PasswordHash          string    `json:"-"`
+	Role                  string    `json:"role"`
+	Disabled              bool      `json:"disabled"`
+	GroupID               string    `json:"groupId"`
+	DailyPPTLimit         *int      `json:"dailyPPTLimit,omitempty"`
+	DailySlideLimit       *int      `json:"dailySlideLimit,omitempty"`
+	SlideConcurrencyLimit *int      `json:"slideConcurrencyLimit,omitempty"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type storedUser struct {
-	ID              string    `json:"id"`
-	Email           string    `json:"email"`
-	Username        string    `json:"username"`
-	PasswordHash    string    `json:"passwordHash"`
-	Role            string    `json:"role"`
-	Disabled        bool      `json:"disabled"`
-	GroupID         string    `json:"groupId"`
-	DailyPPTLimit   *int      `json:"dailyPPTLimit,omitempty"`
-	DailySlideLimit *int      `json:"dailySlideLimit,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID                    string    `json:"id"`
+	Email                 string    `json:"email"`
+	Username              string    `json:"username"`
+	PasswordHash          string    `json:"passwordHash"`
+	Role                  string    `json:"role"`
+	Disabled              bool      `json:"disabled"`
+	GroupID               string    `json:"groupId"`
+	DailyPPTLimit         *int      `json:"dailyPPTLimit,omitempty"`
+	DailySlideLimit       *int      `json:"dailySlideLimit,omitempty"`
+	SlideConcurrencyLimit *int      `json:"slideConcurrencyLimit,omitempty"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type Session struct {
@@ -51,21 +56,23 @@ type Session struct {
 }
 
 type UserGroup struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description"`
-	DailyPPTLimit   int       `json:"dailyPPTLimit"`
-	DailySlideLimit int       `json:"dailySlideLimit"`
-	IsDefault       bool      `json:"isDefault"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID                    string    `json:"id"`
+	Name                  string    `json:"name"`
+	Description           string    `json:"description"`
+	DailyPPTLimit         int       `json:"dailyPPTLimit"`
+	DailySlideLimit       int       `json:"dailySlideLimit"`
+	SlideConcurrencyLimit int       `json:"slideConcurrencyLimit"`
+	IsDefault             bool      `json:"isDefault"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type SystemSettings struct {
-	RegistrationEnabled bool      `json:"registrationEnabled"`
-	DefaultUserGroupID  string    `json:"defaultUserGroupId"`
-	UpdatedAt           time.Time `json:"updatedAt"`
-	UpdatedBy           string    `json:"updatedBy"`
+	RegistrationEnabled          bool      `json:"registrationEnabled"`
+	DefaultUserGroupID           string    `json:"defaultUserGroupId"`
+	DefaultSlideConcurrencyLimit int       `json:"defaultSlideConcurrencyLimit"`
+	UpdatedAt                    time.Time `json:"updatedAt"`
+	UpdatedBy                    string    `json:"updatedBy"`
 }
 
 type DailyUsage struct {
@@ -94,22 +101,24 @@ type EffectiveQuota struct {
 }
 
 type CreateUserGroupInput struct {
-	ID              string
-	Name            string
-	Description     string
-	DailyPPTLimit   int
-	DailySlideLimit int
-	IsDefault       bool
-	CreatedAt       *time.Time
-	UpdatedAt       *time.Time
+	ID                    string
+	Name                  string
+	Description           string
+	DailyPPTLimit         int
+	DailySlideLimit       int
+	SlideConcurrencyLimit int
+	IsDefault             bool
+	CreatedAt             *time.Time
+	UpdatedAt             *time.Time
 }
 
 type UpdateUserGroupInput struct {
-	Name            *string
-	Description     *string
-	DailyPPTLimit   *int
-	DailySlideLimit *int
-	IsDefault       *bool
+	Name                  *string
+	Description           *string
+	DailyPPTLimit         *int
+	DailySlideLimit       *int
+	SlideConcurrencyLimit *int
+	IsDefault             *bool
 }
 
 type ReserveQuotaInput struct {
@@ -150,44 +159,47 @@ type PromptSettings struct {
 }
 
 type CreateUserInput struct {
-	ID              string
-	Email           string
-	Username        string
-	PasswordHash    string
-	Role            string
-	Disabled        bool
-	GroupID         string
-	DailyPPTLimit   *int
-	DailySlideLimit *int
-	CreatedAt       *time.Time
-	UpdatedAt       *time.Time
+	ID                    string
+	Email                 string
+	Username              string
+	PasswordHash          string
+	Role                  string
+	Disabled              bool
+	GroupID               string
+	DailyPPTLimit         *int
+	DailySlideLimit       *int
+	SlideConcurrencyLimit *int
+	CreatedAt             *time.Time
+	UpdatedAt             *time.Time
 }
 
 type UpdateUserInput struct {
-	Email                *string
-	Username             *string
-	PasswordHash         *string
-	Role                 *string
-	Disabled             *bool
-	GroupID              *string
-	DailyPPTLimit        *int
-	DailySlideLimit      *int
-	ClearDailyPPTLimit   bool
-	ClearDailySlideLimit bool
+	Email                      *string
+	Username                   *string
+	PasswordHash               *string
+	Role                       *string
+	Disabled                   *bool
+	GroupID                    *string
+	DailyPPTLimit              *int
+	DailySlideLimit            *int
+	SlideConcurrencyLimit      *int
+	ClearDailyPPTLimit         bool
+	ClearDailySlideLimit       bool
+	ClearSlideConcurrencyLimit bool
 }
 
 func DefaultUserGroup(now time.Time) UserGroup {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return UserGroup{ID: DefaultUserGroupID, Name: "默认用户组", Description: "系统默认用户组", DailyPPTLimit: 0, DailySlideLimit: 100, IsDefault: true, CreatedAt: now, UpdatedAt: now}
+	return UserGroup{ID: DefaultUserGroupID, Name: "默认用户组", Description: "系统默认用户组", DailyPPTLimit: 0, DailySlideLimit: 100, SlideConcurrencyLimit: DefaultSlideConcurrencyLimit, IsDefault: true, CreatedAt: now, UpdatedAt: now}
 }
 
 func DefaultSystemSettings(now time.Time) SystemSettings {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return SystemSettings{RegistrationEnabled: true, DefaultUserGroupID: DefaultUserGroupID, UpdatedAt: now}
+	return SystemSettings{RegistrationEnabled: true, DefaultUserGroupID: DefaultUserGroupID, DefaultSlideConcurrencyLimit: DefaultSlideConcurrencyLimit, UpdatedAt: now}
 }
 
 func DefaultUsername(email string) string {
@@ -202,11 +214,11 @@ func DefaultUsername(email string) string {
 }
 
 func publicUser(user storedUser) User {
-	return User{ID: user.ID, Email: user.Email, Username: user.Username, PasswordHash: user.PasswordHash, Role: user.Role, Disabled: user.Disabled, GroupID: user.GroupID, DailyPPTLimit: cloneIntPtr(user.DailyPPTLimit), DailySlideLimit: cloneIntPtr(user.DailySlideLimit), CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt}
+	return User{ID: user.ID, Email: user.Email, Username: user.Username, PasswordHash: user.PasswordHash, Role: user.Role, Disabled: user.Disabled, GroupID: user.GroupID, DailyPPTLimit: cloneIntPtr(user.DailyPPTLimit), DailySlideLimit: cloneIntPtr(user.DailySlideLimit), SlideConcurrencyLimit: cloneIntPtr(user.SlideConcurrencyLimit), CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt}
 }
 
 func storedFromUser(user User) storedUser {
-	return storedUser{ID: user.ID, Email: user.Email, Username: user.Username, PasswordHash: user.PasswordHash, Role: user.Role, Disabled: user.Disabled, GroupID: user.GroupID, DailyPPTLimit: cloneIntPtr(user.DailyPPTLimit), DailySlideLimit: cloneIntPtr(user.DailySlideLimit), CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt}
+	return storedUser{ID: user.ID, Email: user.Email, Username: user.Username, PasswordHash: user.PasswordHash, Role: user.Role, Disabled: user.Disabled, GroupID: user.GroupID, DailyPPTLimit: cloneIntPtr(user.DailyPPTLimit), DailySlideLimit: cloneIntPtr(user.DailySlideLimit), SlideConcurrencyLimit: cloneIntPtr(user.SlideConcurrencyLimit), CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt}
 }
 
 func cloneIntPtr(value *int) *int {

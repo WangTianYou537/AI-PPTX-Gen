@@ -94,6 +94,7 @@ func (s *SQLStore) migrate() error {
 			id INTEGER PRIMARY KEY,
 			registration_enabled BOOLEAN NOT NULL DEFAULT TRUE,
 			default_user_group_id TEXT NOT NULL DEFAULT 'default',
+			default_slide_concurrency_limit INTEGER NOT NULL DEFAULT 2,
 			updated_at TIMESTAMP NOT NULL,
 			updated_by TEXT NOT NULL DEFAULT ''
 		)`,
@@ -103,6 +104,7 @@ func (s *SQLStore) migrate() error {
 			description TEXT NOT NULL DEFAULT '',
 			daily_ppt_limit INTEGER NOT NULL,
 			daily_slide_limit INTEGER NOT NULL,
+			slide_concurrency_limit INTEGER NOT NULL DEFAULT 2,
 			is_default BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
@@ -130,6 +132,9 @@ func (s *SQLStore) migrate() error {
 		"ALTER TABLE users ADD COLUMN group_id TEXT NOT NULL DEFAULT 'default'",
 		"ALTER TABLE users ADD COLUMN daily_ppt_limit INTEGER NULL",
 		"ALTER TABLE users ADD COLUMN daily_slide_limit INTEGER NULL",
+		"ALTER TABLE users ADD COLUMN slide_concurrency_limit INTEGER NULL",
+		"ALTER TABLE user_groups ADD COLUMN slide_concurrency_limit INTEGER NOT NULL DEFAULT 2",
+		"ALTER TABLE system_settings ADD COLUMN default_slide_concurrency_limit INTEGER NOT NULL DEFAULT 2",
 	}
 	for _, stmt := range columns {
 		if _, err := s.db.Exec(stmt); err != nil && !isDuplicateColumnErr(err) {
@@ -143,24 +148,24 @@ func (s *SQLStore) ensureDefaults() error {
 	now := time.Now().UTC()
 	group := DefaultUserGroup(now)
 	if s.dialect == "postgres" {
-		_, err := s.db.Exec(`INSERT INTO user_groups (id, name, description, daily_ppt_limit, daily_slide_limit, is_default, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING`, group.ID, group.Name, group.Description, group.DailyPPTLimit, group.DailySlideLimit, boolInt(group.IsDefault), group.CreatedAt, group.UpdatedAt)
+		_, err := s.db.Exec(`INSERT INTO user_groups (id, name, description, daily_ppt_limit, daily_slide_limit, slide_concurrency_limit, is_default, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING`, group.ID, group.Name, group.Description, group.DailyPPTLimit, group.DailySlideLimit, group.SlideConcurrencyLimit, boolInt(group.IsDefault), group.CreatedAt, group.UpdatedAt)
 		if err != nil {
 			return err
 		}
-		_, err = s.db.Exec(`INSERT INTO system_settings (id, registration_enabled, default_user_group_id, updated_at, updated_by)
-			VALUES (1, TRUE, $1, $2, '') ON CONFLICT (id) DO NOTHING`, group.ID, now)
+		_, err = s.db.Exec(`INSERT INTO system_settings (id, registration_enabled, default_user_group_id, default_slide_concurrency_limit, updated_at, updated_by)
+			VALUES (1, TRUE, $1, $2, $3, '') ON CONFLICT (id) DO NOTHING`, group.ID, group.SlideConcurrencyLimit, now)
 		if err != nil {
 			return err
 		}
 	} else {
-		_, err := s.db.Exec(`INSERT INTO user_groups (id, name, description, daily_ppt_limit, daily_slide_limit, is_default, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, group.ID, group.Name, group.Description, group.DailyPPTLimit, group.DailySlideLimit, boolInt(group.IsDefault), group.CreatedAt, group.UpdatedAt)
+		_, err := s.db.Exec(`INSERT INTO user_groups (id, name, description, daily_ppt_limit, daily_slide_limit, slide_concurrency_limit, is_default, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, group.ID, group.Name, group.Description, group.DailyPPTLimit, group.DailySlideLimit, group.SlideConcurrencyLimit, boolInt(group.IsDefault), group.CreatedAt, group.UpdatedAt)
 		if err != nil {
 			return err
 		}
-		_, err = s.db.Exec(`INSERT INTO system_settings (id, registration_enabled, default_user_group_id, updated_at, updated_by)
-			VALUES (1, ?, ?, ?, '') ON CONFLICT(id) DO NOTHING`, boolInt(true), group.ID, now)
+		_, err = s.db.Exec(`INSERT INTO system_settings (id, registration_enabled, default_user_group_id, default_slide_concurrency_limit, updated_at, updated_by)
+			VALUES (1, ?, ?, ?, ?, '') ON CONFLICT(id) DO NOTHING`, boolInt(true), group.ID, group.SlideConcurrencyLimit, now)
 		if err != nil {
 			return err
 		}
@@ -222,8 +227,8 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scanUser(row scanner) (User, error) {
 	var user User
-	var pptLimit, slideLimit sql.NullInt64
-	if err := row.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.Role, &user.Disabled, &user.GroupID, &pptLimit, &slideLimit, &user.CreatedAt, &user.UpdatedAt); err != nil {
+	var pptLimit, slideLimit, concurrencyLimit sql.NullInt64
+	if err := row.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.Role, &user.Disabled, &user.GroupID, &pptLimit, &slideLimit, &concurrencyLimit, &user.CreatedAt, &user.UpdatedAt); err != nil {
 		return User{}, mapSQLErr(err)
 	}
 	if pptLimit.Valid {
@@ -233,6 +238,10 @@ func scanUser(row scanner) (User, error) {
 	if slideLimit.Valid {
 		value := int(slideLimit.Int64)
 		user.DailySlideLimit = &value
+	}
+	if concurrencyLimit.Valid {
+		value := int(concurrencyLimit.Int64)
+		user.SlideConcurrencyLimit = &value
 	}
 	if user.Username == "" {
 		user.Username = DefaultUsername(user.Email)
@@ -245,7 +254,7 @@ func scanUser(row scanner) (User, error) {
 
 func scanUserGroup(row scanner) (UserGroup, error) {
 	var group UserGroup
-	if err := row.Scan(&group.ID, &group.Name, &group.Description, &group.DailyPPTLimit, &group.DailySlideLimit, &group.IsDefault, &group.CreatedAt, &group.UpdatedAt); err != nil {
+	if err := row.Scan(&group.ID, &group.Name, &group.Description, &group.DailyPPTLimit, &group.DailySlideLimit, &group.SlideConcurrencyLimit, &group.IsDefault, &group.CreatedAt, &group.UpdatedAt); err != nil {
 		return UserGroup{}, mapSQLErr(err)
 	}
 	return group, nil
@@ -259,7 +268,7 @@ func scanDailyUsage(row scanner) (DailyUsage, error) {
 	return usage, nil
 }
 
-const userColumns = "id, email, username, password_hash, role, disabled, group_id, daily_ppt_limit, daily_slide_limit, created_at, updated_at"
+const userColumns = "id, email, username, password_hash, role, disabled, group_id, daily_ppt_limit, daily_slide_limit, slide_concurrency_limit, created_at, updated_at"
 
 func boolInt(v bool) int {
 	if v {

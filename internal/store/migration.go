@@ -36,7 +36,7 @@ func ExportSnapshot(ctx context.Context, source Store) (Snapshot, error) {
 
 func ImportSnapshot(ctx context.Context, target Store, snapshot Snapshot) error {
 	for _, group := range snapshot.UserGroups {
-		_, err := target.CreateUserGroup(ctx, CreateUserGroupInput{ID: group.ID, Name: group.Name, Description: group.Description, DailyPPTLimit: group.DailyPPTLimit, DailySlideLimit: group.DailySlideLimit, IsDefault: group.IsDefault, CreatedAt: &group.CreatedAt, UpdatedAt: &group.UpdatedAt})
+		_, err := target.CreateUserGroup(ctx, CreateUserGroupInput{ID: group.ID, Name: group.Name, Description: group.Description, DailyPPTLimit: group.DailyPPTLimit, DailySlideLimit: group.DailySlideLimit, SlideConcurrencyLimit: group.SlideConcurrencyLimit, IsDefault: group.IsDefault, CreatedAt: &group.CreatedAt, UpdatedAt: &group.UpdatedAt})
 		if err != nil && err != ErrAlreadyExists {
 			// The built-in default group already exists in fresh stores.
 			if group.ID != DefaultUserGroupID {
@@ -44,7 +44,7 @@ func ImportSnapshot(ctx context.Context, target Store, snapshot Snapshot) error 
 			}
 		}
 		if group.ID == DefaultUserGroupID {
-			_, _ = target.UpdateUserGroup(ctx, DefaultUserGroupID, UpdateUserGroupInput{Name: &group.Name, Description: &group.Description, DailyPPTLimit: &group.DailyPPTLimit, DailySlideLimit: &group.DailySlideLimit, IsDefault: &group.IsDefault})
+			_, _ = target.UpdateUserGroup(ctx, DefaultUserGroupID, UpdateUserGroupInput{Name: &group.Name, Description: &group.Description, DailyPPTLimit: &group.DailyPPTLimit, DailySlideLimit: &group.DailySlideLimit, SlideConcurrencyLimit: &group.SlideConcurrencyLimit, IsDefault: &group.IsDefault})
 		}
 	}
 	if snapshot.SystemSettings.DefaultUserGroupID != "" {
@@ -53,7 +53,7 @@ func ImportSnapshot(ctx context.Context, target Store, snapshot Snapshot) error 
 		}
 	}
 	for _, user := range snapshot.Users {
-		_, err := target.CreateUser(ctx, CreateUserInput{ID: user.ID, Email: user.Email, Username: user.Username, PasswordHash: user.PasswordHash, Role: user.Role, Disabled: user.Disabled, GroupID: user.GroupID, DailyPPTLimit: user.DailyPPTLimit, DailySlideLimit: user.DailySlideLimit, CreatedAt: &user.CreatedAt, UpdatedAt: &user.UpdatedAt})
+		_, err := target.CreateUser(ctx, CreateUserInput{ID: user.ID, Email: user.Email, Username: user.Username, PasswordHash: user.PasswordHash, Role: user.Role, Disabled: user.Disabled, GroupID: user.GroupID, DailyPPTLimit: user.DailyPPTLimit, DailySlideLimit: user.DailySlideLimit, SlideConcurrencyLimit: user.SlideConcurrencyLimit, CreatedAt: &user.CreatedAt, UpdatedAt: &user.UpdatedAt})
 		if err != nil && err != ErrAlreadyExists {
 			return err
 		}

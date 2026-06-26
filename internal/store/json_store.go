@@ -91,7 +91,15 @@ func (s *JSONStore) normalizeLoadedDataLocked() {
 	if s.data.SystemSettings.UpdatedAt.IsZero() {
 		s.data.SystemSettings = DefaultSystemSettings(now)
 	}
+	if s.data.SystemSettings.DefaultSlideConcurrencyLimit <= 0 {
+		s.data.SystemSettings.DefaultSlideConcurrencyLimit = DefaultSlideConcurrencyLimit
+	}
 	s.data.SystemSettings.DefaultUserGroupID = defaultID
+	for i := range s.data.UserGroups {
+		if s.data.UserGroups[i].SlideConcurrencyLimit <= 0 {
+			s.data.UserGroups[i].SlideConcurrencyLimit = s.data.SystemSettings.DefaultSlideConcurrencyLimit
+		}
+	}
 	for i := range s.data.Users {
 		if s.data.Users[i].Username == "" {
 			s.data.Users[i].Username = DefaultUsername(s.data.Users[i].Email)
@@ -168,7 +176,7 @@ func (s *JSONStore) CreateUser(ctx context.Context, input CreateUserInput) (User
 	if username == "" {
 		username = DefaultUsername(email)
 	}
-	user := storedUser{ID: id, Email: email, Username: username, PasswordHash: input.PasswordHash, Role: role, Disabled: input.Disabled, GroupID: groupID, DailyPPTLimit: cloneIntPtr(input.DailyPPTLimit), DailySlideLimit: cloneIntPtr(input.DailySlideLimit), CreatedAt: createdAt, UpdatedAt: updatedAt}
+	user := storedUser{ID: id, Email: email, Username: username, PasswordHash: input.PasswordHash, Role: role, Disabled: input.Disabled, GroupID: groupID, DailyPPTLimit: cloneIntPtr(input.DailyPPTLimit), DailySlideLimit: cloneIntPtr(input.DailySlideLimit), SlideConcurrencyLimit: cloneIntPtr(input.SlideConcurrencyLimit), CreatedAt: createdAt, UpdatedAt: updatedAt}
 	s.data.Users = append(s.data.Users, user)
 	if err := s.saveLocked(); err != nil {
 		return User{}, err
@@ -264,6 +272,11 @@ func (s *JSONStore) UpdateUser(ctx context.Context, id string, input UpdateUserI
 			s.data.Users[i].DailySlideLimit = nil
 		} else if input.DailySlideLimit != nil {
 			s.data.Users[i].DailySlideLimit = cloneIntPtr(input.DailySlideLimit)
+		}
+		if input.ClearSlideConcurrencyLimit {
+			s.data.Users[i].SlideConcurrencyLimit = nil
+		} else if input.SlideConcurrencyLimit != nil {
+			s.data.Users[i].SlideConcurrencyLimit = cloneIntPtr(input.SlideConcurrencyLimit)
 		}
 		s.data.Users[i].UpdatedAt = time.Now().UTC()
 		if err := s.saveLocked(); err != nil {
@@ -386,6 +399,9 @@ func (s *JSONStore) SaveSystemSettings(ctx context.Context, settings SystemSetti
 	if _, ok := s.findGroupLocked(settings.DefaultUserGroupID); !ok {
 		return ErrNotFound
 	}
+	if settings.DefaultSlideConcurrencyLimit <= 0 {
+		settings.DefaultSlideConcurrencyLimit = DefaultSlideConcurrencyLimit
+	}
 	settings.UpdatedAt = time.Now().UTC()
 	s.data.SystemSettings = settings
 	s.setDefaultGroupLocked(settings.DefaultUserGroupID)
@@ -410,11 +426,14 @@ func (s *JSONStore) CreateUserGroup(ctx context.Context, input CreateUserGroupIn
 	if input.UpdatedAt != nil {
 		updatedAt = *input.UpdatedAt
 	}
-	group := UserGroup{ID: id, Name: strings.TrimSpace(input.Name), Description: strings.TrimSpace(input.Description), DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit, IsDefault: input.IsDefault, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	group := UserGroup{ID: id, Name: strings.TrimSpace(input.Name), Description: strings.TrimSpace(input.Description), DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit, SlideConcurrencyLimit: input.SlideConcurrencyLimit, IsDefault: input.IsDefault, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	if group.SlideConcurrencyLimit <= 0 {
+		group.SlideConcurrencyLimit = s.data.SystemSettings.DefaultSlideConcurrencyLimit
+	}
 	if group.Name == "" {
 		return UserGroup{}, ErrInvalidStore
 	}
-	if group.DailyPPTLimit < 0 || group.DailySlideLimit < 0 {
+	if group.DailyPPTLimit < 0 || group.DailySlideLimit < 0 || group.SlideConcurrencyLimit < 1 {
 		return UserGroup{}, ErrInvalidStore
 	}
 	s.data.UserGroups = append(s.data.UserGroups, group)
@@ -476,6 +495,12 @@ func (s *JSONStore) UpdateUserGroup(ctx context.Context, id string, input Update
 				return UserGroup{}, ErrInvalidStore
 			}
 			s.data.UserGroups[i].DailySlideLimit = *input.DailySlideLimit
+		}
+		if input.SlideConcurrencyLimit != nil {
+			if *input.SlideConcurrencyLimit < 1 {
+				return UserGroup{}, ErrInvalidStore
+			}
+			s.data.UserGroups[i].SlideConcurrencyLimit = *input.SlideConcurrencyLimit
 		}
 		if input.IsDefault != nil && *input.IsDefault {
 			s.data.SystemSettings.DefaultUserGroupID = id

@@ -50,12 +50,12 @@ func (s *SQLStore) CreateUser(ctx context.Context, input CreateUserInput) (User,
 	if _, err := s.GetUserGroup(ctx, groupID); err != nil {
 		return User{}, err
 	}
-	user := User{ID: id, Email: email, Username: username, PasswordHash: input.PasswordHash, Role: role, Disabled: input.Disabled, GroupID: groupID, DailyPPTLimit: cloneIntPtr(input.DailyPPTLimit), DailySlideLimit: cloneIntPtr(input.DailySlideLimit), CreatedAt: createdAt, UpdatedAt: updatedAt}
+	user := User{ID: id, Email: email, Username: username, PasswordHash: input.PasswordHash, Role: role, Disabled: input.Disabled, GroupID: groupID, DailyPPTLimit: cloneIntPtr(input.DailyPPTLimit), DailySlideLimit: cloneIntPtr(input.DailySlideLimit), SlideConcurrencyLimit: cloneIntPtr(input.SlideConcurrencyLimit), CreatedAt: createdAt, UpdatedAt: updatedAt}
 	query := fmt.Sprintf(
-		"INSERT INTO users (id, email, username, password_hash, role, disabled, group_id, daily_ppt_limit, daily_slide_limit, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-		s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5), s.placeholder(6), s.placeholder(7), s.placeholder(8), s.placeholder(9), s.placeholder(10), s.placeholder(11),
+		"INSERT INTO users (id, email, username, password_hash, role, disabled, group_id, daily_ppt_limit, daily_slide_limit, slide_concurrency_limit, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+		s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5), s.placeholder(6), s.placeholder(7), s.placeholder(8), s.placeholder(9), s.placeholder(10), s.placeholder(11), s.placeholder(12),
 	)
-	_, err := s.db.ExecContext(ctx, query, user.ID, user.Email, user.Username, user.PasswordHash, user.Role, boolInt(user.Disabled), user.GroupID, nullableInt(user.DailyPPTLimit), nullableInt(user.DailySlideLimit), user.CreatedAt, user.UpdatedAt)
+	_, err := s.db.ExecContext(ctx, query, user.ID, user.Email, user.Username, user.PasswordHash, user.Role, boolInt(user.Disabled), user.GroupID, nullableInt(user.DailyPPTLimit), nullableInt(user.DailySlideLimit), nullableInt(user.SlideConcurrencyLimit), user.CreatedAt, user.UpdatedAt)
 	if err != nil {
 		return User{}, mapSQLErr(err)
 	}
@@ -134,6 +134,11 @@ func (s *SQLStore) UpdateUser(ctx context.Context, id string, input UpdateUserIn
 		sets = append(sets, "daily_slide_limit = NULL")
 	} else if input.DailySlideLimit != nil {
 		add("daily_slide_limit", *input.DailySlideLimit)
+	}
+	if input.ClearSlideConcurrencyLimit {
+		sets = append(sets, "slide_concurrency_limit = NULL")
+	} else if input.SlideConcurrencyLimit != nil {
+		add("slide_concurrency_limit", *input.SlideConcurrencyLimit)
 	}
 	add("updated_at", time.Now().UTC())
 	args = append(args, id)
@@ -282,7 +287,7 @@ func (s *SQLStore) SavePromptSettings(ctx context.Context, settings PromptSettin
 
 func (s *SQLStore) GetSystemSettings(ctx context.Context) (SystemSettings, error) {
 	var settings SystemSettings
-	err := s.db.QueryRowContext(ctx, `SELECT registration_enabled, default_user_group_id, updated_at, updated_by FROM system_settings WHERE id = 1`).Scan(&settings.RegistrationEnabled, &settings.DefaultUserGroupID, &settings.UpdatedAt, &settings.UpdatedBy)
+	err := s.db.QueryRowContext(ctx, `SELECT registration_enabled, default_user_group_id, default_slide_concurrency_limit, updated_at, updated_by FROM system_settings WHERE id = 1`).Scan(&settings.RegistrationEnabled, &settings.DefaultUserGroupID, &settings.DefaultSlideConcurrencyLimit, &settings.UpdatedAt, &settings.UpdatedBy)
 	if err == sql.ErrNoRows {
 		return DefaultSystemSettings(time.Now().UTC()), nil
 	}
@@ -298,6 +303,9 @@ func (s *SQLStore) SaveSystemSettings(ctx context.Context, settings SystemSettin
 	}
 	if _, err := s.GetUserGroup(ctx, settings.DefaultUserGroupID); err != nil {
 		return err
+	}
+	if settings.DefaultSlideConcurrencyLimit <= 0 {
+		settings.DefaultSlideConcurrencyLimit = DefaultSlideConcurrencyLimit
 	}
 	settings.UpdatedAt = time.Now().UTC()
 	if s.dialect == "postgres" {
@@ -333,12 +341,19 @@ func (s *SQLStore) CreateUserGroup(ctx context.Context, input CreateUserGroupInp
 	if input.UpdatedAt != nil {
 		updatedAt = *input.UpdatedAt
 	}
-	group := UserGroup{ID: id, Name: strings.TrimSpace(input.Name), Description: strings.TrimSpace(input.Description), DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit, IsDefault: input.IsDefault, CreatedAt: createdAt, UpdatedAt: updatedAt}
-	if group.Name == "" || group.DailyPPTLimit < 0 || group.DailySlideLimit < 0 {
+	group := UserGroup{ID: id, Name: strings.TrimSpace(input.Name), Description: strings.TrimSpace(input.Description), DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit, SlideConcurrencyLimit: input.SlideConcurrencyLimit, IsDefault: input.IsDefault, CreatedAt: createdAt, UpdatedAt: updatedAt}
+	if group.SlideConcurrencyLimit <= 0 {
+		settings, err := s.GetSystemSettings(ctx)
+		if err != nil {
+			return UserGroup{}, err
+		}
+		group.SlideConcurrencyLimit = settings.DefaultSlideConcurrencyLimit
+	}
+	if group.Name == "" || group.DailyPPTLimit < 0 || group.DailySlideLimit < 0 || group.SlideConcurrencyLimit < 1 {
 		return UserGroup{}, ErrInvalidStore
 	}
-	query := fmt.Sprintf("INSERT INTO user_groups (id, name, description, daily_ppt_limit, daily_slide_limit, is_default, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5), s.placeholder(6), s.placeholder(7), s.placeholder(8))
-	if _, err := s.db.ExecContext(ctx, query, group.ID, group.Name, group.Description, group.DailyPPTLimit, group.DailySlideLimit, boolInt(group.IsDefault), group.CreatedAt, group.UpdatedAt); err != nil {
+	query := fmt.Sprintf("INSERT INTO user_groups (id, name, description, daily_ppt_limit, daily_slide_limit, slide_concurrency_limit, is_default, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5), s.placeholder(6), s.placeholder(7), s.placeholder(8), s.placeholder(9))
+	if _, err := s.db.ExecContext(ctx, query, group.ID, group.Name, group.Description, group.DailyPPTLimit, group.DailySlideLimit, group.SlideConcurrencyLimit, boolInt(group.IsDefault), group.CreatedAt, group.UpdatedAt); err != nil {
 		return UserGroup{}, mapSQLErr(err)
 	}
 	if group.IsDefault {
@@ -355,7 +370,7 @@ func (s *SQLStore) CreateUserGroup(ctx context.Context, input CreateUserGroupInp
 }
 
 func (s *SQLStore) ListUserGroups(ctx context.Context) ([]UserGroup, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, name, description, daily_ppt_limit, daily_slide_limit, is_default, created_at, updated_at FROM user_groups ORDER BY created_at ASC")
+	rows, err := s.db.QueryContext(ctx, "SELECT id, name, description, daily_ppt_limit, daily_slide_limit, slide_concurrency_limit, is_default, created_at, updated_at FROM user_groups ORDER BY created_at ASC")
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +387,7 @@ func (s *SQLStore) ListUserGroups(ctx context.Context) ([]UserGroup, error) {
 }
 
 func (s *SQLStore) GetUserGroup(ctx context.Context, id string) (UserGroup, error) {
-	query := fmt.Sprintf("SELECT id, name, description, daily_ppt_limit, daily_slide_limit, is_default, created_at, updated_at FROM user_groups WHERE id = %s", s.placeholder(1))
+	query := fmt.Sprintf("SELECT id, name, description, daily_ppt_limit, daily_slide_limit, slide_concurrency_limit, is_default, created_at, updated_at FROM user_groups WHERE id = %s", s.placeholder(1))
 	return scanUserGroup(s.db.QueryRowContext(ctx, query, id))
 }
 
@@ -400,6 +415,12 @@ func (s *SQLStore) UpdateUserGroup(ctx context.Context, id string, input UpdateU
 			return UserGroup{}, ErrInvalidStore
 		}
 		add("daily_slide_limit", *input.DailySlideLimit)
+	}
+	if input.SlideConcurrencyLimit != nil {
+		if *input.SlideConcurrencyLimit < 1 {
+			return UserGroup{}, ErrInvalidStore
+		}
+		add("slide_concurrency_limit", *input.SlideConcurrencyLimit)
 	}
 	if input.IsDefault != nil {
 		add("is_default", boolInt(*input.IsDefault))

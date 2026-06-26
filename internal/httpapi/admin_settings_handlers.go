@@ -9,16 +9,18 @@ import (
 )
 
 type adminSettingsRequest struct {
-	RegistrationEnabled bool   `json:"registrationEnabled"`
-	DefaultUserGroupID  string `json:"defaultUserGroupId"`
+	RegistrationEnabled          bool   `json:"registrationEnabled"`
+	DefaultUserGroupID           string `json:"defaultUserGroupId"`
+	DefaultSlideConcurrencyLimit int    `json:"defaultSlideConcurrencyLimit"`
 }
 
 type userGroupRequest struct {
-	Name            *string `json:"name"`
-	Description     *string `json:"description"`
-	DailyPPTLimit   *int    `json:"dailyPPTLimit"`
-	DailySlideLimit *int    `json:"dailySlideLimit"`
-	IsDefault       *bool   `json:"isDefault"`
+	Name                  *string `json:"name"`
+	Description           *string `json:"description"`
+	DailyPPTLimit         *int    `json:"dailyPPTLimit"`
+	DailySlideLimit       *int    `json:"dailySlideLimit"`
+	SlideConcurrencyLimit *int    `json:"slideConcurrencyLimit"`
+	IsDefault             *bool   `json:"isDefault"`
 }
 
 func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +39,11 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		user, _ := s.currentUser(r)
-		settings := store.SystemSettings{RegistrationEnabled: input.RegistrationEnabled, DefaultUserGroupID: input.DefaultUserGroupID, UpdatedBy: user.ID}
+		settings := store.SystemSettings{RegistrationEnabled: input.RegistrationEnabled, DefaultUserGroupID: input.DefaultUserGroupID, DefaultSlideConcurrencyLimit: input.DefaultSlideConcurrencyLimit, UpdatedBy: user.ID}
+		if err := validateConcurrencyLimit(&settings.DefaultSlideConcurrencyLimit); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if err := s.store.SaveSystemSettings(r.Context(), settings); err != nil {
 			handleAdminStoreError(w, err)
 			return
@@ -79,6 +85,10 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if err := validateConcurrencyLimit(input.SlideConcurrencyLimit); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		description := ""
 		if input.Description != nil {
 			description = *input.Description
@@ -87,7 +97,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		if input.IsDefault != nil {
 			isDefault = *input.IsDefault
 		}
-		group, err := s.store.CreateUserGroup(r.Context(), store.CreateUserGroupInput{Name: *input.Name, Description: description, DailyPPTLimit: pptLimit, DailySlideLimit: slideLimit, IsDefault: isDefault})
+		group, err := s.store.CreateUserGroup(r.Context(), store.CreateUserGroupInput{Name: *input.Name, Description: description, DailyPPTLimit: pptLimit, DailySlideLimit: slideLimit, SlideConcurrencyLimit: concurrencyLimitValue(input.SlideConcurrencyLimit), IsDefault: isDefault})
 		if err != nil {
 			handleAdminStoreError(w, err)
 			return
@@ -111,8 +121,12 @@ func (s *Server) handleAdminGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
 			return
 		}
-		update := store.UpdateUserGroupInput{Name: input.Name, Description: input.Description, DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit, IsDefault: input.IsDefault}
+		update := store.UpdateUserGroupInput{Name: input.Name, Description: input.Description, DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit, SlideConcurrencyLimit: input.SlideConcurrencyLimit, IsDefault: input.IsDefault}
 		if err := validateLimits(input.DailyPPTLimit, input.DailySlideLimit); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateConcurrencyLimit(input.SlideConcurrencyLimit); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -131,4 +145,11 @@ func (s *Server) handleAdminGroup(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func concurrencyLimitValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }

@@ -13,14 +13,15 @@ import (
 )
 
 type adminUserRequest struct {
-	Email           *string `json:"email"`
-	Username        *string `json:"username"`
-	Password        *string `json:"password"`
-	Role            *string `json:"role"`
-	Disabled        *bool   `json:"disabled"`
-	GroupID         *string `json:"groupId"`
-	DailyPPTLimit   *int    `json:"dailyPPTLimit"`
-	DailySlideLimit *int    `json:"dailySlideLimit"`
+	Email                 *string `json:"email"`
+	Username              *string `json:"username"`
+	Password              *string `json:"password"`
+	Role                  *string `json:"role"`
+	Disabled              *bool   `json:"disabled"`
+	GroupID               *string `json:"groupId"`
+	DailyPPTLimit         *int    `json:"dailyPPTLimit"`
+	DailySlideLimit       *int    `json:"dailySlideLimit"`
+	SlideConcurrencyLimit *int    `json:"slideConcurrencyLimit"`
 }
 
 type promptSettingsRequest struct {
@@ -64,7 +65,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		if input.Disabled != nil {
 			disabled = *input.Disabled
 		}
-		create := store.CreateUserInput{Email: *input.Email, PasswordHash: passwordHash, Role: role, Disabled: disabled, DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit}
+		create := store.CreateUserInput{Email: *input.Email, PasswordHash: passwordHash, Role: role, Disabled: disabled, DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit, SlideConcurrencyLimit: input.SlideConcurrencyLimit}
 		if input.Username != nil {
 			create.Username = *input.Username
 		}
@@ -72,6 +73,10 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			create.GroupID = *input.GroupID
 		}
 		if err := validateLimits(input.DailyPPTLimit, input.DailySlideLimit); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateConcurrencyLimit(input.SlideConcurrencyLimit); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -157,7 +162,15 @@ func (s *Server) updateAdminUser(w http.ResponseWriter, r *http.Request, id stri
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := applyNullableLimit(raw, "slideConcurrencyLimit", &update.SlideConcurrencyLimit, &update.ClearSlideConcurrencyLimit); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := validateLimits(update.DailyPPTLimit, update.DailySlideLimit); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateConcurrencyLimit(update.SlideConcurrencyLimit); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -320,6 +333,19 @@ func validateLimits(values ...*int) error {
 		if value != nil && *value < 0 {
 			return errors.New("额度不能小于 0")
 		}
+	}
+	return nil
+}
+
+func validateConcurrencyLimit(value *int) error {
+	if value == nil {
+		return nil
+	}
+	if *value < 1 {
+		return errors.New("页面生成并发数不能小于 1")
+	}
+	if *value > store.MaxSlideConcurrencyLimit {
+		return errors.New("页面生成并发数不能超过 10")
 	}
 	return nil
 }
