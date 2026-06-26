@@ -14,6 +14,7 @@ import (
 
 type authRequest struct {
 	Email    string       `json:"email"`
+	Username string       `json:"username"`
 	Password string       `json:"password"`
 	Storage  store.Config `json:"storage"`
 }
@@ -48,12 +49,7 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	if storageConfigured {
 		storagePtr = &currentConfig
 	}
-	writeJSON(w, http.StatusOK, setupStatusResponse{
-		NeedsSetup:        needsSetup,
-		StorageConfigured: storageConfigured,
-		Storage:           storagePtr,
-		SupportedStorage:  store.SupportedStorageOptions(),
-	})
+	writeJSON(w, http.StatusOK, setupStatusResponse{NeedsSetup: needsSetup, StorageConfigured: storageConfigured, Storage: storagePtr, SupportedStorage: store.SupportedStorageOptions()})
 }
 
 func (s *Server) handleSetupStorageTest(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +100,7 @@ func (s *Server) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "系统已经完成安装")
 		return
 	}
-	user, token, err := s.createUserAndSession(r, input.Email, input.Password, store.RoleAdmin)
+	user, token, err := s.createUserAndSession(r, input.Email, input.Username, input.Password, store.RoleAdmin, "")
 	if err != nil {
 		handleAuthError(w, err)
 		return
@@ -156,12 +152,21 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "请先完成管理员初始化")
 		return
 	}
+	settings, err := s.store.GetSystemSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !settings.RegistrationEnabled {
+		writeError(w, http.StatusForbidden, "当前未开放注册，请联系管理员创建账号")
+		return
+	}
 	var input authRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
 		return
 	}
-	user, token, err := s.createUserAndSession(r, input.Email, input.Password, store.RoleUser)
+	user, token, err := s.createUserAndSession(r, input.Email, input.Username, input.Password, store.RoleUser, settings.DefaultUserGroupID)
 	if err != nil {
 		handleAuthError(w, err)
 		return
@@ -197,7 +202,21 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, meResponse{User: user})
 }
 
-func (s *Server) createUserAndSession(r *http.Request, email, password, role string) (store.User, string, error) {
+func (s *Server) handleMyQuota(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	user, _ := s.currentUser(r)
+	quota, err := s.store.GetEffectiveQuota(r.Context(), user.ID, store.TodayUTC())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, quota)
+}
+
+func (s *Server) createUserAndSession(r *http.Request, email, username, password, role, groupID string) (store.User, string, error) {
 	email = strings.TrimSpace(email)
 	if !strings.Contains(email, "@") {
 		return store.User{}, "", errBadRequest("请输入有效邮箱")
@@ -206,7 +225,7 @@ func (s *Server) createUserAndSession(r *http.Request, email, password, role str
 	if err != nil {
 		return store.User{}, "", errBadRequest(err.Error())
 	}
-	user, err := s.store.CreateUser(r.Context(), store.CreateUserInput{Email: email, PasswordHash: passwordHash, Role: role})
+	user, err := s.store.CreateUser(r.Context(), store.CreateUserInput{Email: email, Username: username, PasswordHash: passwordHash, Role: role, GroupID: groupID})
 	if err != nil {
 		return store.User{}, "", err
 	}
@@ -221,8 +240,7 @@ func (s *Server) createUserAndSession(r *http.Request, email, password, role str
 
 type badRequestError string
 
-func (e badRequestError) Error() string { return string(e) }
-
+func (e badRequestError) Error() string  { return string(e) }
 func errBadRequest(message string) error { return badRequestError(message) }
 
 func handleAuthError(w http.ResponseWriter, err error) {
@@ -232,6 +250,8 @@ func handleAuthError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, store.ErrAlreadyExists):
 		writeError(w, http.StatusBadRequest, "邮箱已存在")
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusBadRequest, "用户组不存在")
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	}

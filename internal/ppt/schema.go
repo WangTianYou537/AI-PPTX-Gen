@@ -37,4 +37,5 @@ type SlideSVG struct {
 
 type SVGResponse struct {
 	Slides []SlideSVG `json:"slides"`
+	Quota  any        `json:"quota,omitempty"`
 }

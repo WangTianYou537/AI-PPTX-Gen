@@ -80,6 +80,23 @@ func (s *Server) handleGenerateSVG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user, _ := s.currentUser(r)
+	reservation, err := s.store.ReserveDailyQuota(r.Context(), store.ReserveQuotaInput{UserID: user.ID, Date: store.TodayUTC(), Slides: len(input.Outline.Slides)})
+	if err != nil {
+		if errors.Is(err, store.ErrQuotaExceeded) {
+			writeError(w, http.StatusTooManyRequests, "今日生成额度不足")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	releaseReservation := true
+	defer func() {
+		if releaseReservation {
+			_ = s.store.ReleaseDailyQuota(r.Context(), reservation)
+		}
+	}()
+
 	settings, err := s.promptSettings(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -105,6 +122,13 @@ func (s *Server) handleGenerateSVG(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Slides = append(response.Slides, ppt.SlideSVG{SlideID: slide.ID, Title: slide.Title, SVG: svg})
 	}
+	quota, err := s.store.CommitDailyQuota(r.Context(), reservation, len(response.Slides))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	releaseReservation = false
+	response.Quota = quota
 	writeJSON(w, http.StatusOK, response)
 }
 

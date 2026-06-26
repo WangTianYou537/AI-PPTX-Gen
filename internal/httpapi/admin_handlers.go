@@ -13,10 +13,14 @@ import (
 )
 
 type adminUserRequest struct {
-	Email    *string `json:"email"`
-	Password *string `json:"password"`
-	Role     *string `json:"role"`
-	Disabled *bool   `json:"disabled"`
+	Email           *string `json:"email"`
+	Username        *string `json:"username"`
+	Password        *string `json:"password"`
+	Role            *string `json:"role"`
+	Disabled        *bool   `json:"disabled"`
+	GroupID         *string `json:"groupId"`
+	DailyPPTLimit   *int    `json:"dailyPPTLimit"`
+	DailySlideLimit *int    `json:"dailySlideLimit"`
 }
 
 type promptSettingsRequest struct {
@@ -60,7 +64,18 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		if input.Disabled != nil {
 			disabled = *input.Disabled
 		}
-		user, err := s.store.CreateUser(r.Context(), store.CreateUserInput{Email: *input.Email, PasswordHash: passwordHash, Role: role, Disabled: disabled})
+		create := store.CreateUserInput{Email: *input.Email, PasswordHash: passwordHash, Role: role, Disabled: disabled, DailyPPTLimit: input.DailyPPTLimit, DailySlideLimit: input.DailySlideLimit}
+		if input.Username != nil {
+			create.Username = *input.Username
+		}
+		if input.GroupID != nil {
+			create.GroupID = *input.GroupID
+		}
+		if err := validateLimits(input.DailyPPTLimit, input.DailySlideLimit); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		user, err := s.store.CreateUser(r.Context(), create)
 		if err != nil {
 			handleAuthError(w, err)
 			return
@@ -89,15 +104,21 @@ func (s *Server) handleAdminUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateAdminUser(w http.ResponseWriter, r *http.Request, id string, currentUser store.User) {
-	var input adminUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
 		return
 	}
+	var input adminUserRequest
+	payload, _ := json.Marshal(raw)
+	_ = json.Unmarshal(payload, &input)
 	var update store.UpdateUserInput
 	if input.Email != nil {
 		email := strings.TrimSpace(*input.Email)
 		update.Email = &email
+	}
+	if input.Username != nil {
+		update.Username = input.Username
 	}
 	if input.Password != nil && *input.Password != "" {
 		passwordHash, err := auth.HashPassword(*input.Password)
@@ -124,6 +145,21 @@ func (s *Server) updateAdminUser(w http.ResponseWriter, r *http.Request, id stri
 			return
 		}
 		update.Disabled = input.Disabled
+	}
+	if input.GroupID != nil {
+		update.GroupID = input.GroupID
+	}
+	if err := applyNullableLimit(raw, "dailyPPTLimit", &update.DailyPPTLimit, &update.ClearDailyPPTLimit); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := applyNullableLimit(raw, "dailySlideLimit", &update.DailySlideLimit, &update.ClearDailySlideLimit); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateLimits(update.DailyPPTLimit, update.DailySlideLimit); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	user, err := s.store.UpdateUser(r.Context(), id, update)
 	if err != nil {
@@ -252,10 +288,38 @@ func validatePrompt(prompt string) error {
 func handleAdminStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, "用户不存在")
+		writeError(w, http.StatusNotFound, "资源不存在")
 	case errors.Is(err, store.ErrAlreadyExists):
 		writeError(w, http.StatusBadRequest, "邮箱已存在")
+	case errors.Is(err, store.ErrInvalidStore):
+		writeError(w, http.StatusBadRequest, "操作不符合当前数据约束")
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	}
+}
+
+func applyNullableLimit(raw map[string]json.RawMessage, key string, target **int, clear *bool) error {
+	value, ok := raw[key]
+	if !ok {
+		return nil
+	}
+	if string(value) == "null" {
+		*clear = true
+		return nil
+	}
+	var parsed int
+	if err := json.Unmarshal(value, &parsed); err != nil {
+		return errors.New("额度必须是数字或 null")
+	}
+	*target = &parsed
+	return nil
+}
+
+func validateLimits(values ...*int) error {
+	for _, value := range values {
+		if value != nil && *value < 0 {
+			return errors.New("额度不能小于 0")
+		}
+	}
+	return nil
 }

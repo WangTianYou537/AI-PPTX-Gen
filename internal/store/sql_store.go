@@ -90,9 +90,102 @@ func (s *SQLStore) migrate() error {
 			updated_at TIMESTAMP NOT NULL,
 			updated_by TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS system_settings (
+			id INTEGER PRIMARY KEY,
+			registration_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+			default_user_group_id TEXT NOT NULL DEFAULT 'default',
+			updated_at TIMESTAMP NOT NULL,
+			updated_by TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_groups (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			daily_ppt_limit INTEGER NOT NULL,
+			daily_slide_limit INTEGER NOT NULL,
+			is_default BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS daily_usage (
+			user_id TEXT NOT NULL,
+			usage_date TEXT NOT NULL,
+			ppt_used INTEGER NOT NULL DEFAULT 0,
+			slides_used INTEGER NOT NULL DEFAULT 0,
+			ppt_reserved INTEGER NOT NULL DEFAULT 0,
+			slides_reserved INTEGER NOT NULL DEFAULT 0,
+			updated_at TIMESTAMP NOT NULL,
+			PRIMARY KEY (user_id, usage_date)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_group_id ON users(group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(usage_date)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	columns := []string{
+		"ALTER TABLE users ADD COLUMN username TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE users ADD COLUMN group_id TEXT NOT NULL DEFAULT 'default'",
+		"ALTER TABLE users ADD COLUMN daily_ppt_limit INTEGER NULL",
+		"ALTER TABLE users ADD COLUMN daily_slide_limit INTEGER NULL",
+	}
+	for _, stmt := range columns {
+		if _, err := s.db.Exec(stmt); err != nil && !isDuplicateColumnErr(err) {
+			return err
+		}
+	}
+	return s.ensureDefaults()
+}
+
+func (s *SQLStore) ensureDefaults() error {
+	now := time.Now().UTC()
+	group := DefaultUserGroup(now)
+	if s.dialect == "postgres" {
+		_, err := s.db.Exec(`INSERT INTO user_groups (id, name, description, daily_ppt_limit, daily_slide_limit, is_default, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING`, group.ID, group.Name, group.Description, group.DailyPPTLimit, group.DailySlideLimit, boolInt(group.IsDefault), group.CreatedAt, group.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`INSERT INTO system_settings (id, registration_enabled, default_user_group_id, updated_at, updated_by)
+			VALUES (1, TRUE, $1, $2, '') ON CONFLICT (id) DO NOTHING`, group.ID, now)
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err := s.db.Exec(`INSERT INTO user_groups (id, name, description, daily_ppt_limit, daily_slide_limit, is_default, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, group.ID, group.Name, group.Description, group.DailyPPTLimit, group.DailySlideLimit, boolInt(group.IsDefault), group.CreatedAt, group.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`INSERT INTO system_settings (id, registration_enabled, default_user_group_id, updated_at, updated_by)
+			VALUES (1, ?, ?, ?, '') ON CONFLICT(id) DO NOTHING`, boolInt(true), group.ID, now)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := s.db.Exec("UPDATE users SET group_id = 'default' WHERE group_id = ''"); err != nil {
+		return err
+	}
+	rows, err := s.db.Query("SELECT id, email FROM users WHERE username = ''")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	updates := map[string]string{}
+	for rows.Next() {
+		var id, email string
+		if err := rows.Scan(&id, &email); err != nil {
+			return err
+		}
+		updates[id] = DefaultUsername(email)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for id, username := range updates {
+		if _, err := s.db.Exec(fmt.Sprintf("UPDATE users SET username = %s WHERE id = %s", s.placeholder(1), s.placeholder(2)), username, id); err != nil {
 			return err
 		}
 	}
@@ -107,6 +200,14 @@ func isUniqueErr(err error) bool {
 	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate")
 }
 
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists")
+}
+
 func mapSQLErr(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
@@ -117,17 +218,48 @@ func mapSQLErr(err error) error {
 	return err
 }
 
-type scanner interface {
-	Scan(dest ...any) error
-}
+type scanner interface{ Scan(dest ...any) error }
 
 func scanUser(row scanner) (User, error) {
 	var user User
-	if err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Role, &user.Disabled, &user.CreatedAt, &user.UpdatedAt); err != nil {
+	var pptLimit, slideLimit sql.NullInt64
+	if err := row.Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.Role, &user.Disabled, &user.GroupID, &pptLimit, &slideLimit, &user.CreatedAt, &user.UpdatedAt); err != nil {
 		return User{}, mapSQLErr(err)
+	}
+	if pptLimit.Valid {
+		value := int(pptLimit.Int64)
+		user.DailyPPTLimit = &value
+	}
+	if slideLimit.Valid {
+		value := int(slideLimit.Int64)
+		user.DailySlideLimit = &value
+	}
+	if user.Username == "" {
+		user.Username = DefaultUsername(user.Email)
+	}
+	if user.GroupID == "" {
+		user.GroupID = DefaultUserGroupID
 	}
 	return user, nil
 }
+
+func scanUserGroup(row scanner) (UserGroup, error) {
+	var group UserGroup
+	if err := row.Scan(&group.ID, &group.Name, &group.Description, &group.DailyPPTLimit, &group.DailySlideLimit, &group.IsDefault, &group.CreatedAt, &group.UpdatedAt); err != nil {
+		return UserGroup{}, mapSQLErr(err)
+	}
+	return group, nil
+}
+
+func scanDailyUsage(row scanner) (DailyUsage, error) {
+	var usage DailyUsage
+	if err := row.Scan(&usage.UserID, &usage.Date, &usage.PPTUsed, &usage.SlidesUsed, &usage.PPTReserved, &usage.SlidesReserved, &usage.UpdatedAt); err != nil {
+		return DailyUsage{}, mapSQLErr(err)
+	}
+	return usage, nil
+}
+
+const userColumns = "id, email, username, password_hash, role, disabled, group_id, daily_ppt_limit, daily_slide_limit, created_at, updated_at"
 
 func boolInt(v bool) int {
 	if v {
@@ -137,9 +269,6 @@ func boolInt(v bool) int {
 }
 
 type sqlSessionRow struct {
-	ID        string
-	UserID    string
-	TokenHash string
-	ExpiresAt time.Time
-	CreatedAt time.Time
+	ID, UserID, TokenHash string
+	ExpiresAt, CreatedAt  time.Time
 }

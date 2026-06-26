@@ -122,7 +122,6 @@ func (m *StoreManager) NeedsSetup(ctx context.Context) (bool, error) {
 	}
 	return current.NeedsSetup(ctx)
 }
-
 func (m *StoreManager) CreateUser(ctx context.Context, input store.CreateUserInput) (store.User, error) {
 	current, err := m.current()
 	if err != nil {
@@ -130,7 +129,6 @@ func (m *StoreManager) CreateUser(ctx context.Context, input store.CreateUserInp
 	}
 	return current.CreateUser(ctx, input)
 }
-
 func (m *StoreManager) GetUserByEmail(ctx context.Context, email string) (store.User, error) {
 	current, err := m.current()
 	if err != nil {
@@ -138,7 +136,6 @@ func (m *StoreManager) GetUserByEmail(ctx context.Context, email string) (store.
 	}
 	return current.GetUserByEmail(ctx, email)
 }
-
 func (m *StoreManager) GetUserByID(ctx context.Context, id string) (store.User, error) {
 	current, err := m.current()
 	if err != nil {
@@ -146,7 +143,6 @@ func (m *StoreManager) GetUserByID(ctx context.Context, id string) (store.User, 
 	}
 	return current.GetUserByID(ctx, id)
 }
-
 func (m *StoreManager) ListUsers(ctx context.Context) ([]store.User, error) {
 	current, err := m.current()
 	if err != nil {
@@ -154,7 +150,6 @@ func (m *StoreManager) ListUsers(ctx context.Context) ([]store.User, error) {
 	}
 	return current.ListUsers(ctx)
 }
-
 func (m *StoreManager) UpdateUser(ctx context.Context, id string, input store.UpdateUserInput) (store.User, error) {
 	current, err := m.current()
 	if err != nil {
@@ -162,7 +157,6 @@ func (m *StoreManager) UpdateUser(ctx context.Context, id string, input store.Up
 	}
 	return current.UpdateUser(ctx, id, input)
 }
-
 func (m *StoreManager) DeleteUser(ctx context.Context, id string) error {
 	current, err := m.current()
 	if err != nil {
@@ -170,7 +164,6 @@ func (m *StoreManager) DeleteUser(ctx context.Context, id string) error {
 	}
 	return current.DeleteUser(ctx, id)
 }
-
 func (m *StoreManager) CountAdmins(ctx context.Context) (int, error) {
 	current, err := m.current()
 	if err != nil {
@@ -178,7 +171,6 @@ func (m *StoreManager) CountAdmins(ctx context.Context) (int, error) {
 	}
 	return current.CountAdmins(ctx)
 }
-
 func (m *StoreManager) CreateSession(ctx context.Context, session store.Session) error {
 	current, err := m.current()
 	if err != nil {
@@ -186,7 +178,6 @@ func (m *StoreManager) CreateSession(ctx context.Context, session store.Session)
 	}
 	return current.CreateSession(ctx, session)
 }
-
 func (m *StoreManager) GetSession(ctx context.Context, tokenHash string) (store.Session, error) {
 	current, err := m.current()
 	if err != nil {
@@ -194,7 +185,6 @@ func (m *StoreManager) GetSession(ctx context.Context, tokenHash string) (store.
 	}
 	return current.GetSession(ctx, tokenHash)
 }
-
 func (m *StoreManager) DeleteSession(ctx context.Context, tokenHash string) error {
 	current, err := m.current()
 	if err != nil {
@@ -202,7 +192,6 @@ func (m *StoreManager) DeleteSession(ctx context.Context, tokenHash string) erro
 	}
 	return current.DeleteSession(ctx, tokenHash)
 }
-
 func (m *StoreManager) GetPromptSettings(ctx context.Context) (store.PromptSettings, error) {
 	current, err := m.current()
 	if err != nil {
@@ -210,11 +199,101 @@ func (m *StoreManager) GetPromptSettings(ctx context.Context) (store.PromptSetti
 	}
 	return current.GetPromptSettings(ctx)
 }
-
 func (m *StoreManager) SavePromptSettings(ctx context.Context, settings store.PromptSettings) error {
 	current, err := m.current()
 	if err != nil {
 		return err
 	}
 	return current.SavePromptSettings(ctx, settings)
+}
+func (m *StoreManager) GetSystemSettings(ctx context.Context) (store.SystemSettings, error) {
+	current, err := m.current()
+	if err != nil {
+		return store.SystemSettings{}, err
+	}
+	return current.GetSystemSettings(ctx)
+}
+func (m *StoreManager) SaveSystemSettings(ctx context.Context, settings store.SystemSettings) error {
+	current, err := m.current()
+	if err != nil {
+		return err
+	}
+	return current.SaveSystemSettings(ctx, settings)
+}
+func (m *StoreManager) CreateUserGroup(ctx context.Context, input store.CreateUserGroupInput) (store.UserGroup, error) {
+	current, err := m.current()
+	if err != nil {
+		return store.UserGroup{}, err
+	}
+	return current.CreateUserGroup(ctx, input)
+}
+func (m *StoreManager) ListUserGroups(ctx context.Context) ([]store.UserGroup, error) {
+	current, err := m.current()
+	if err != nil {
+		return nil, err
+	}
+	return current.ListUserGroups(ctx)
+}
+func (m *StoreManager) GetUserGroup(ctx context.Context, id string) (store.UserGroup, error) {
+	current, err := m.current()
+	if err != nil {
+		return store.UserGroup{}, err
+	}
+	return current.GetUserGroup(ctx, id)
+}
+func (m *StoreManager) UpdateUserGroup(ctx context.Context, id string, input store.UpdateUserGroupInput) (store.UserGroup, error) {
+	current, err := m.current()
+	if err != nil {
+		return store.UserGroup{}, err
+	}
+	return current.UpdateUserGroup(ctx, id, input)
+}
+func (m *StoreManager) DeleteUserGroup(ctx context.Context, id string) error {
+	current, err := m.current()
+	if err != nil {
+		return err
+	}
+	return current.DeleteUserGroup(ctx, id)
+}
+func (m *StoreManager) GetEffectiveQuota(ctx context.Context, userID string, date string) (store.EffectiveQuota, error) {
+	current, err := m.current()
+	if err != nil {
+		return store.EffectiveQuota{}, err
+	}
+	return current.GetEffectiveQuota(ctx, userID, date)
+}
+func (m *StoreManager) ReserveDailyQuota(ctx context.Context, input store.ReserveQuotaInput) (store.QuotaReservation, error) {
+	current, err := m.current()
+	if err != nil {
+		return store.QuotaReservation{}, err
+	}
+	return current.ReserveDailyQuota(ctx, input)
+}
+func (m *StoreManager) CommitDailyQuota(ctx context.Context, reservation store.QuotaReservation, actualSlides int) (store.EffectiveQuota, error) {
+	current, err := m.current()
+	if err != nil {
+		return store.EffectiveQuota{}, err
+	}
+	return current.CommitDailyQuota(ctx, reservation, actualSlides)
+}
+func (m *StoreManager) ReleaseDailyQuota(ctx context.Context, reservation store.QuotaReservation) error {
+	current, err := m.current()
+	if err != nil {
+		return err
+	}
+	return current.ReleaseDailyQuota(ctx, reservation)
+}
+func (m *StoreManager) ListDailyUsages(ctx context.Context) ([]store.DailyUsage, error) {
+	current, err := m.current()
+	if err != nil {
+		return nil, err
+	}
+	return current.ListDailyUsages(ctx)
+}
+func (m *StoreManager) UpsertDailyUsage(ctx context.Context, usage store.DailyUsage) error {
+	current, err := m.current()
+	if err != nil {
+		return err
+	}
+	return current.UpsertDailyUsage(ctx, usage)
 }
