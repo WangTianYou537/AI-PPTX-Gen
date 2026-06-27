@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -103,8 +102,4 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 	})
-}
-
-func isNotFound(err error) bool {
-	return errors.Is(err, store.ErrNotFound)
 }

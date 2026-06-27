@@ -56,6 +56,7 @@ func envBool(key string) bool {
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
+// replace port in addr with port user set independently
 func resolveAddr(addr, port string) string {
 	if port == "" {
 		return addr
