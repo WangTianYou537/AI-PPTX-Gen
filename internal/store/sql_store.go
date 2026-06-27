@@ -61,9 +61,14 @@ func (s *SQLStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS users (
 			id TEXT PRIMARY KEY,
 			email TEXT NOT NULL UNIQUE,
+			username TEXT NOT NULL DEFAULT '',
 			password_hash TEXT NOT NULL,
 			role TEXT NOT NULL,
 			disabled BOOLEAN NOT NULL DEFAULT FALSE,
+			group_id TEXT NOT NULL DEFAULT 'default',
+			daily_ppt_limit INTEGER NULL,
+			daily_slide_limit INTEGER NULL,
+			slide_concurrency_limit INTEGER NULL,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
@@ -74,7 +79,6 @@ func (s *SQLStore) migrate() error {
 			expires_at TIMESTAMP NOT NULL,
 			created_at TIMESTAMP NOT NULL
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash)`,
 		`CREATE TABLE IF NOT EXISTS prompt_settings (
 			id INTEGER PRIMARY KEY,
 			architect_system_prompt TEXT NOT NULL DEFAULT '',
@@ -119,8 +123,6 @@ func (s *SQLStore) migrate() error {
 			updated_at TIMESTAMP NOT NULL,
 			PRIMARY KEY (user_id, usage_date)
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_users_group_id ON users(group_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(usage_date)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -138,6 +140,16 @@ func (s *SQLStore) migrate() error {
 	}
 	for _, stmt := range columns {
 		if _, err := s.db.Exec(stmt); err != nil && !isDuplicateColumnErr(err) {
+			return err
+		}
+	}
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_group_id ON users(group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(usage_date)`,
+	}
+	for _, stmt := range indexes {
+		if _, err := s.db.Exec(stmt); err != nil {
 			return err
 		}
 	}
