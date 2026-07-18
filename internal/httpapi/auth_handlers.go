@@ -30,6 +30,48 @@ type meResponse struct {
 	User store.User `json:"user"`
 }
 
+type bootstrapResponse struct {
+	NeedsSetup        bool                  `json:"needsSetup"`
+	StorageConfigured bool                  `json:"storageConfigured"`
+	User              *store.User           `json:"user,omitempty"`
+	Quota             *store.EffectiveQuota `json:"quota,omitempty"`
+}
+
+// handleBootstrap returns setup + optional session user/quota in one round trip.
+// Unauthenticated callers get needsSetup/storageConfigured only (HTTP 200).
+func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	_, storageConfigured := s.stores.Config()
+	needsSetup := true
+	if storageConfigured {
+		var err error
+		needsSetup, err = s.dataStore().NeedsSetup(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	resp := bootstrapResponse{NeedsSetup: needsSetup, StorageConfigured: storageConfigured}
+	if needsSetup || !storageConfigured {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	user, ok := s.authenticate(r)
+	if !ok {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	resp.User = &user
+	quota, err := s.dataStore().GetEffectiveQuota(r.Context(), user.ID, store.TodayUTC())
+	if err == nil {
+		resp.Quota = &quota
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -39,7 +81,7 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	needsSetup := true
 	if storageConfigured {
 		var err error
-		needsSetup, err = s.store.NeedsSetup(r.Context())
+		needsSetup, err = s.dataStore().NeedsSetup(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -91,7 +133,7 @@ func (s *Server) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	needsSetup, err := s.store.NeedsSetup(r.Context())
+	needsSetup, err := s.dataStore().NeedsSetup(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -119,7 +161,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
 		return
 	}
-	user, err := s.store.GetUserByEmail(r.Context(), input.Email)
+	user, err := s.dataStore().GetUserByEmail(r.Context(), input.Email)
 	if err != nil || user.Disabled || !auth.CheckPassword(input.Password, user.PasswordHash) {
 		writeError(w, http.StatusUnauthorized, "邮箱或密码不正确")
 		return
@@ -130,7 +172,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	if err := s.store.CreateSession(r.Context(), store.Session{ID: newSessionID(), UserID: user.ID, TokenHash: tokenHash, ExpiresAt: now.Add(s.sessionTTL), CreatedAt: now}); err != nil {
+	if err := s.dataStore().CreateSession(r.Context(), store.Session{ID: newSessionID(), UserID: user.ID, TokenHash: tokenHash, ExpiresAt: now.Add(s.sessionTTL), CreatedAt: now}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -143,7 +185,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	needsSetup, err := s.store.NeedsSetup(r.Context())
+	needsSetup, err := s.dataStore().NeedsSetup(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -152,7 +194,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "请先完成管理员初始化")
 		return
 	}
-	settings, err := s.store.GetSystemSettings(r.Context())
+	settings, err := s.dataStore().GetSystemSettings(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -181,7 +223,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cookie, err := r.Cookie(s.sessionCookie); err == nil && cookie.Value != "" {
-		if err := s.store.DeleteSession(r.Context(), auth.HashToken(cookie.Value)); err != nil && debugEnabled.Load() {
+		if err := s.dataStore().DeleteSession(r.Context(), auth.HashToken(cookie.Value)); err != nil && debugEnabled.Load() {
 			log.Printf("logout delete session failed request_id=%s err=%v", requestIDFromContext(r.Context()), err)
 		}
 	}
@@ -208,7 +250,7 @@ func (s *Server) handleMyQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := s.currentUser(r)
-	quota, err := s.store.GetEffectiveQuota(r.Context(), user.ID, store.TodayUTC())
+	quota, err := s.dataStore().GetEffectiveQuota(r.Context(), user.ID, store.TodayUTC())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -225,7 +267,7 @@ func (s *Server) createUserAndSession(r *http.Request, email, username, password
 	if err != nil {
 		return store.User{}, "", errBadRequest(err.Error())
 	}
-	user, err := s.store.CreateUser(r.Context(), store.CreateUserInput{Email: email, Username: username, PasswordHash: passwordHash, Role: role, GroupID: groupID})
+	user, err := s.dataStore().CreateUser(r.Context(), store.CreateUserInput{Email: email, Username: username, PasswordHash: passwordHash, Role: role, GroupID: groupID})
 	if err != nil {
 		return store.User{}, "", err
 	}
@@ -234,7 +276,7 @@ func (s *Server) createUserAndSession(r *http.Request, email, username, password
 		return store.User{}, "", err
 	}
 	now := time.Now().UTC()
-	err = s.store.CreateSession(r.Context(), store.Session{ID: newSessionID(), UserID: user.ID, TokenHash: tokenHash, ExpiresAt: now.Add(s.sessionTTL), CreatedAt: now})
+	err = s.dataStore().CreateSession(r.Context(), store.Session{ID: newSessionID(), UserID: user.ID, TokenHash: tokenHash, ExpiresAt: now.Add(s.sessionTTL), CreatedAt: now})
 	return user, token, err
 }
 

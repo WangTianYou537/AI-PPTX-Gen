@@ -66,9 +66,14 @@ func generateOpenAI(ctx context.Context, req GenerateRequest) (GenerateResponse,
 		}
 	}
 
+	bodyPayload, err := mergePayloadJSON(payload, req.Extra)
+	if err != nil {
+		return GenerateResponse{}, err
+	}
+
 	response, status, body, err := postJSONStream(ctx, baseURL+"/chat/completions", map[string]string{
 		"Authorization": "Bearer " + req.Config.APIKey,
-	}, payload)
+	}, bodyPayload)
 	if err != nil {
 		return GenerateResponse{}, err
 	}

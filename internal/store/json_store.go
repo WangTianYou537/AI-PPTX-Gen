@@ -25,6 +25,7 @@ type jsonData struct {
 	SystemSettings SystemSettings `json:"systemSettings"`
 	UserGroups     []UserGroup    `json:"userGroups"`
 	DailyUsages    []DailyUsage   `json:"dailyUsages"`
+	LLMProviders   []LLMProvider  `json:"llmProviders"`
 }
 
 func NewJSONStore(path string) (*JSONStore, error) {
@@ -665,23 +666,97 @@ func (s *JSONStore) effectiveQuotaLocked(userID, date string) (EffectiveQuota, e
 	if !ok {
 		group, _ = s.findGroupLocked(s.data.SystemSettings.DefaultUserGroupID)
 	}
-	pptLimit := group.DailyPPTLimit
-	slideLimit := group.DailySlideLimit
-	source := QuotaSourceGroup
-	if user.DailyPPTLimit != nil {
-		pptLimit = *user.DailyPPTLimit
-		source = QuotaSourceUser
-	}
-	if user.DailySlideLimit != nil {
-		slideLimit = *user.DailySlideLimit
-		source = QuotaSourceUser
-	}
+	pptLimit, slideLimit, source := ResolveQuotaLimits(publicUser(user), group)
 	usage := s.ensureUsageLocked(userID, date)
-	return buildEffectiveQuota(date, pptLimit, slideLimit, source, group, *usage), nil
+	return BuildEffectiveQuota(date, pptLimit, slideLimit, source, group, *usage), nil
 }
 
-func buildEffectiveQuota(date string, _ int, slideLimit int, source string, group UserGroup, usage DailyUsage) EffectiveQuota {
-	return EffectiveQuota{Date: date, DailyPPTLimit: 0, DailySlideLimit: slideLimit, PPTUsed: usage.PPTUsed, SlidesUsed: usage.SlidesUsed, PPTReserved: usage.PPTReserved, SlidesReserved: usage.SlidesReserved, PPTRemaining: 0, SlidesRemaining: maxInt(0, slideLimit-usage.SlidesUsed-usage.SlidesReserved), Source: source, GroupID: group.ID, GroupName: group.Name}
+func (s *JSONStore) ListLLMProviders(ctx context.Context) ([]LLMProvider, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := append([]LLMProvider(nil), s.data.LLMProviders...)
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *JSONStore) GetLLMProvider(ctx context.Context, id string) (LLMProvider, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.data.LLMProviders {
+		if p.ID == id {
+			return p, nil
+		}
+	}
+	return LLMProvider{}, ErrNotFound
+}
+
+func (s *JSONStore) CreateLLMProvider(ctx context.Context, input CreateLLMProviderInput) (LLMProvider, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	id := input.ID
+	if id == "" {
+		id = newID()
+	}
+	name := strings.TrimSpace(input.Name)
+	kind := strings.TrimSpace(strings.ToLower(input.Kind))
+	if name == "" || kind == "" || strings.TrimSpace(input.APIKey) == "" {
+		return LLMProvider{}, ErrInvalidStore
+	}
+	provider := LLMProvider{ID: id, Name: name, Kind: kind, BaseURL: strings.TrimSpace(input.BaseURL), APIKey: input.APIKey, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
+	s.data.LLMProviders = append(s.data.LLMProviders, provider)
+	if err := s.saveLocked(); err != nil {
+		return LLMProvider{}, err
+	}
+	return provider, nil
+}
+
+func (s *JSONStore) UpdateLLMProvider(ctx context.Context, id string, input UpdateLLMProviderInput) (LLMProvider, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.data.LLMProviders {
+		if s.data.LLMProviders[i].ID != id {
+			continue
+		}
+		if input.Name != nil {
+			s.data.LLMProviders[i].Name = strings.TrimSpace(*input.Name)
+		}
+		if input.Kind != nil {
+			s.data.LLMProviders[i].Kind = strings.TrimSpace(strings.ToLower(*input.Kind))
+		}
+		if input.BaseURL != nil {
+			s.data.LLMProviders[i].BaseURL = strings.TrimSpace(*input.BaseURL)
+		}
+		if input.APIKey != nil && strings.TrimSpace(*input.APIKey) != "" {
+			s.data.LLMProviders[i].APIKey = *input.APIKey
+		}
+		if input.Enabled != nil {
+			s.data.LLMProviders[i].Enabled = *input.Enabled
+		}
+		s.data.LLMProviders[i].UpdatedAt = time.Now().UTC()
+		if err := s.saveLocked(); err != nil {
+			return LLMProvider{}, err
+		}
+		return s.data.LLMProviders[i], nil
+	}
+	return LLMProvider{}, ErrNotFound
+}
+
+func (s *JSONStore) DeleteLLMProvider(ctx context.Context, id string) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, p := range s.data.LLMProviders {
+		if p.ID == id {
+			s.data.LLMProviders = append(s.data.LLMProviders[:i], s.data.LLMProviders[i+1:]...)
+			return s.saveLocked()
+		}
+	}
+	return ErrNotFound
 }
 
 func TodayUTC() string { return time.Now().UTC().Format("2006-01-02") }

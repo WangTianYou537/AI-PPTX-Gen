@@ -48,8 +48,13 @@ func generateGemini(ctx context.Context, req GenerateRequest) (GenerateResponse,
 		payload.GenerationConfig = map[string]string{"responseMimeType": "application/json"}
 	}
 
+	bodyPayload, err := mergePayloadJSON(payload, req.Extra)
+	if err != nil {
+		return GenerateResponse{}, err
+	}
+
 	endpoint := baseURL + "/models/" + url.PathEscape(req.Config.Model) + ":generateContent?key=" + url.QueryEscape(req.Config.APIKey)
-	body, status, err := postJSON(ctx, endpoint, nil, payload)
+	body, status, err := postJSON(ctx, endpoint, nil, bodyPayload)
 	if err != nil {
 		return GenerateResponse{}, err
 	}

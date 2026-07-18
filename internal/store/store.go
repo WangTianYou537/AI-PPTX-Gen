@@ -40,4 +40,9 @@ type Store interface {
 	ReleaseDailyQuota(ctx context.Context, reservation QuotaReservation) error
 	ListDailyUsages(ctx context.Context) ([]DailyUsage, error)
 	UpsertDailyUsage(ctx context.Context, usage DailyUsage) error
+	ListLLMProviders(ctx context.Context) ([]LLMProvider, error)
+	GetLLMProvider(ctx context.Context, id string) (LLMProvider, error)
+	CreateLLMProvider(ctx context.Context, input CreateLLMProviderInput) (LLMProvider, error)
+	UpdateLLMProvider(ctx context.Context, id string, input UpdateLLMProviderInput) (LLMProvider, error)
+	DeleteLLMProvider(ctx context.Context, id string) error
 }

@@ -26,7 +26,7 @@ type userGroupRequest struct {
 func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		settings, err := s.store.GetSystemSettings(r.Context())
+		settings, err := s.dataStore().GetSystemSettings(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -44,11 +44,11 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := s.store.SaveSystemSettings(r.Context(), settings); err != nil {
+		if err := s.dataStore().SaveSystemSettings(r.Context(), settings); err != nil {
 			handleAdminStoreError(w, err)
 			return
 		}
-		settings, _ = s.store.GetSystemSettings(r.Context())
+		settings, _ = s.dataStore().GetSystemSettings(r.Context())
 		writeJSON(w, http.StatusOK, settings)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -58,7 +58,7 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		groups, err := s.store.ListUserGroups(r.Context())
+		groups, err := s.dataStore().ListUserGroups(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -97,7 +97,7 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		if input.IsDefault != nil {
 			isDefault = *input.IsDefault
 		}
-		group, err := s.store.CreateUserGroup(r.Context(), store.CreateUserGroupInput{Name: *input.Name, Description: description, DailyPPTLimit: pptLimit, DailySlideLimit: slideLimit, SlideConcurrencyLimit: concurrencyLimitValue(input.SlideConcurrencyLimit), IsDefault: isDefault})
+		group, err := s.dataStore().CreateUserGroup(r.Context(), store.CreateUserGroupInput{Name: *input.Name, Description: description, DailyPPTLimit: pptLimit, DailySlideLimit: slideLimit, SlideConcurrencyLimit: concurrencyLimitValue(input.SlideConcurrencyLimit), IsDefault: isDefault})
 		if err != nil {
 			handleAdminStoreError(w, err)
 			return
@@ -130,14 +130,14 @@ func (s *Server) handleAdminGroup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		group, err := s.store.UpdateUserGroup(r.Context(), id, update)
+		group, err := s.dataStore().UpdateUserGroup(r.Context(), id, update)
 		if err != nil {
 			handleAdminStoreError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, group)
 	case http.MethodDelete:
-		if err := s.store.DeleteUserGroup(r.Context(), id); err != nil {
+		if err := s.dataStore().DeleteUserGroup(r.Context(), id); err != nil {
 			handleAdminStoreError(w, err)
 			return
 		}

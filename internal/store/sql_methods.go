@@ -206,8 +206,8 @@ func (s *SQLStore) DeleteSession(ctx context.Context, tokenHash string) error {
 func (s *SQLStore) GetPromptSettings(ctx context.Context) (PromptSettings, error) {
 	var settings PromptSettings
 	err := s.db.QueryRowContext(ctx, `SELECT architect_system_prompt, svg_system_prompt,
-		architect_model_provider, architect_model_api_key, architect_model_base_url, architect_model_model,
-		svg_model_provider, svg_model_api_key, svg_model_base_url, svg_model_model,
+		architect_model_provider, architect_model_api_key, architect_model_base_url, architect_model_model, COALESCE(architect_request_json, ''), COALESCE(architect_provider_id, ''), COALESCE(architect_model, ''),
+		svg_model_provider, svg_model_api_key, svg_model_base_url, svg_model_model, COALESCE(svg_request_json, ''), COALESCE(svg_provider_id, ''), COALESCE(svg_model, ''),
 		updated_at, updated_by FROM prompt_settings WHERE id = 1`).Scan(
 		&settings.Architect.SystemPrompt,
 		&settings.SVG.SystemPrompt,
@@ -215,10 +215,16 @@ func (s *SQLStore) GetPromptSettings(ctx context.Context) (PromptSettings, error
 		&settings.Architect.ModelConfig.APIKey,
 		&settings.Architect.ModelConfig.BaseURL,
 		&settings.Architect.ModelConfig.Model,
+		&settings.Architect.RequestJSON,
+		&settings.Architect.ProviderID,
+		&settings.Architect.Model,
 		&settings.SVG.ModelConfig.Provider,
 		&settings.SVG.ModelConfig.APIKey,
 		&settings.SVG.ModelConfig.BaseURL,
 		&settings.SVG.ModelConfig.Model,
+		&settings.SVG.RequestJSON,
+		&settings.SVG.ProviderID,
+		&settings.SVG.Model,
 		&settings.UpdatedAt,
 		&settings.UpdatedBy,
 	)
@@ -233,13 +239,20 @@ func (s *SQLStore) GetPromptSettings(ctx context.Context) (PromptSettings, error
 
 func (s *SQLStore) SavePromptSettings(ctx context.Context, settings PromptSettings) error {
 	settings.UpdatedAt = time.Now().UTC()
+	if settings.Architect.ProviderID != "" && settings.Architect.Model != "" {
+		settings.Architect.ModelConfig.Model = settings.Architect.Model
+	}
+	if settings.SVG.ProviderID != "" && settings.SVG.Model != "" {
+		settings.SVG.ModelConfig.Model = settings.SVG.Model
+	}
+	var err error
 	if s.dialect == "postgres" {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO prompt_settings (
+		_, err = s.db.ExecContext(ctx, `INSERT INTO prompt_settings (
 			id, architect_system_prompt, svg_system_prompt,
-			architect_model_provider, architect_model_api_key, architect_model_base_url, architect_model_model,
-			svg_model_provider, svg_model_api_key, svg_model_base_url, svg_model_model,
+			architect_model_provider, architect_model_api_key, architect_model_base_url, architect_model_model, architect_request_json,
+			svg_model_provider, svg_model_api_key, svg_model_base_url, svg_model_model, svg_request_json,
 			updated_at, updated_by)
-			VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			ON CONFLICT (id) DO UPDATE SET
 			architect_system_prompt = EXCLUDED.architect_system_prompt,
 			svg_system_prompt = EXCLUDED.svg_system_prompt,
@@ -247,41 +260,50 @@ func (s *SQLStore) SavePromptSettings(ctx context.Context, settings PromptSettin
 			architect_model_api_key = EXCLUDED.architect_model_api_key,
 			architect_model_base_url = EXCLUDED.architect_model_base_url,
 			architect_model_model = EXCLUDED.architect_model_model,
+			architect_request_json = EXCLUDED.architect_request_json,
 			svg_model_provider = EXCLUDED.svg_model_provider,
 			svg_model_api_key = EXCLUDED.svg_model_api_key,
 			svg_model_base_url = EXCLUDED.svg_model_base_url,
 			svg_model_model = EXCLUDED.svg_model_model,
+			svg_request_json = EXCLUDED.svg_request_json,
 			updated_at = EXCLUDED.updated_at,
 			updated_by = EXCLUDED.updated_by`,
 			settings.Architect.SystemPrompt, settings.SVG.SystemPrompt,
-			settings.Architect.ModelConfig.Provider, settings.Architect.ModelConfig.APIKey, settings.Architect.ModelConfig.BaseURL, settings.Architect.ModelConfig.Model,
-			settings.SVG.ModelConfig.Provider, settings.SVG.ModelConfig.APIKey, settings.SVG.ModelConfig.BaseURL, settings.SVG.ModelConfig.Model,
+			settings.Architect.ModelConfig.Provider, settings.Architect.ModelConfig.APIKey, settings.Architect.ModelConfig.BaseURL, settings.Architect.ModelConfig.Model, settings.Architect.RequestJSON,
+			settings.SVG.ModelConfig.Provider, settings.SVG.ModelConfig.APIKey, settings.SVG.ModelConfig.BaseURL, settings.SVG.ModelConfig.Model, settings.SVG.RequestJSON,
 			settings.UpdatedAt, settings.UpdatedBy)
+	} else {
+		_, err = s.db.ExecContext(ctx, `INSERT INTO prompt_settings (
+			id, architect_system_prompt, svg_system_prompt,
+			architect_model_provider, architect_model_api_key, architect_model_base_url, architect_model_model, architect_request_json,
+			svg_model_provider, svg_model_api_key, svg_model_base_url, svg_model_model, svg_request_json,
+			updated_at, updated_by)
+			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+			architect_system_prompt = excluded.architect_system_prompt,
+			svg_system_prompt = excluded.svg_system_prompt,
+			architect_model_provider = excluded.architect_model_provider,
+			architect_model_api_key = excluded.architect_model_api_key,
+			architect_model_base_url = excluded.architect_model_base_url,
+			architect_model_model = excluded.architect_model_model,
+			architect_request_json = excluded.architect_request_json,
+			svg_model_provider = excluded.svg_model_provider,
+			svg_model_api_key = excluded.svg_model_api_key,
+			svg_model_base_url = excluded.svg_model_base_url,
+			svg_model_model = excluded.svg_model_model,
+			svg_request_json = excluded.svg_request_json,
+			updated_at = excluded.updated_at,
+			updated_by = excluded.updated_by`,
+			settings.Architect.SystemPrompt, settings.SVG.SystemPrompt,
+			settings.Architect.ModelConfig.Provider, settings.Architect.ModelConfig.APIKey, settings.Architect.ModelConfig.BaseURL, settings.Architect.ModelConfig.Model, settings.Architect.RequestJSON,
+			settings.SVG.ModelConfig.Provider, settings.SVG.ModelConfig.APIKey, settings.SVG.ModelConfig.BaseURL, settings.SVG.ModelConfig.Model, settings.SVG.RequestJSON,
+			settings.UpdatedAt, settings.UpdatedBy)
+	}
+	if err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO prompt_settings (
-		id, architect_system_prompt, svg_system_prompt,
-		architect_model_provider, architect_model_api_key, architect_model_base_url, architect_model_model,
-		svg_model_provider, svg_model_api_key, svg_model_base_url, svg_model_model,
-		updated_at, updated_by)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-		architect_system_prompt = excluded.architect_system_prompt,
-		svg_system_prompt = excluded.svg_system_prompt,
-		architect_model_provider = excluded.architect_model_provider,
-		architect_model_api_key = excluded.architect_model_api_key,
-		architect_model_base_url = excluded.architect_model_base_url,
-		architect_model_model = excluded.architect_model_model,
-		svg_model_provider = excluded.svg_model_provider,
-		svg_model_api_key = excluded.svg_model_api_key,
-		svg_model_base_url = excluded.svg_model_base_url,
-		svg_model_model = excluded.svg_model_model,
-		updated_at = excluded.updated_at,
-		updated_by = excluded.updated_by`,
-		settings.Architect.SystemPrompt, settings.SVG.SystemPrompt,
-		settings.Architect.ModelConfig.Provider, settings.Architect.ModelConfig.APIKey, settings.Architect.ModelConfig.BaseURL, settings.Architect.ModelConfig.Model,
-		settings.SVG.ModelConfig.Provider, settings.SVG.ModelConfig.APIKey, settings.SVG.ModelConfig.BaseURL, settings.SVG.ModelConfig.Model,
-		settings.UpdatedAt, settings.UpdatedBy)
+	_, err = s.db.ExecContext(ctx, fmt.Sprintf("UPDATE prompt_settings SET architect_provider_id = %s, architect_model = %s, svg_provider_id = %s, svg_model = %s WHERE id = 1", s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4)),
+		settings.Architect.ProviderID, settings.Architect.Model, settings.SVG.ProviderID, settings.SVG.Model)
 	return err
 }
 
@@ -590,17 +612,7 @@ func (s *SQLStore) effectiveQuota(ctx context.Context, user User, date string) (
 			return EffectiveQuota{}, err
 		}
 	}
-	pptLimit := group.DailyPPTLimit
-	slideLimit := group.DailySlideLimit
-	source := QuotaSourceGroup
-	if user.DailyPPTLimit != nil {
-		pptLimit = *user.DailyPPTLimit
-		source = QuotaSourceUser
-	}
-	if user.DailySlideLimit != nil {
-		slideLimit = *user.DailySlideLimit
-		source = QuotaSourceUser
-	}
+	pptLimit, slideLimit, source := ResolveQuotaLimits(user, group)
 	usage, err := s.getDailyUsage(ctx, user.ID, date)
 	if err != nil && err != ErrNotFound {
 		return EffectiveQuota{}, err
@@ -608,7 +620,7 @@ func (s *SQLStore) effectiveQuota(ctx context.Context, user User, date string) (
 	if err == ErrNotFound {
 		usage = DailyUsage{UserID: user.ID, Date: date}
 	}
-	return buildEffectiveQuota(date, pptLimit, slideLimit, source, group, usage), nil
+	return BuildEffectiveQuota(date, pptLimit, slideLimit, source, group, usage), nil
 }
 
 func (s *SQLStore) getDailyUsage(ctx context.Context, userID, date string) (DailyUsage, error) {
@@ -631,4 +643,101 @@ func nullableInt(value *int) any {
 		return nil
 	}
 	return *value
+}
+
+func (s *SQLStore) ListLLMProviders(ctx context.Context) ([]LLMProvider, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT id, name, kind, base_url, api_key, enabled, created_at, updated_at FROM llm_providers ORDER BY created_at ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LLMProvider
+	for rows.Next() {
+		var p LLMProvider
+		var enabled int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		p.Enabled = enabled != 0
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) GetLLMProvider(ctx context.Context, id string) (LLMProvider, error) {
+	query := fmt.Sprintf("SELECT id, name, kind, base_url, api_key, enabled, created_at, updated_at FROM llm_providers WHERE id = %s", s.placeholder(1))
+	var p LLMProvider
+	var enabled int
+	err := s.db.QueryRowContext(ctx, query, id).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &enabled, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return LLMProvider{}, mapSQLErr(err)
+	}
+	p.Enabled = enabled != 0
+	return p, nil
+}
+
+func (s *SQLStore) CreateLLMProvider(ctx context.Context, input CreateLLMProviderInput) (LLMProvider, error) {
+	now := time.Now().UTC()
+	id := input.ID
+	if id == "" {
+		id = newID()
+	}
+	name := strings.TrimSpace(input.Name)
+	kind := strings.TrimSpace(strings.ToLower(input.Kind))
+	if name == "" || kind == "" || strings.TrimSpace(input.APIKey) == "" {
+		return LLMProvider{}, ErrInvalidStore
+	}
+	p := LLMProvider{ID: id, Name: name, Kind: kind, BaseURL: strings.TrimSpace(input.BaseURL), APIKey: input.APIKey, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
+	query := fmt.Sprintf("INSERT INTO llm_providers (id, name, kind, base_url, api_key, enabled, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+		s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5), s.placeholder(6), s.placeholder(7), s.placeholder(8))
+	if _, err := s.db.ExecContext(ctx, query, p.ID, p.Name, p.Kind, p.BaseURL, p.APIKey, boolInt(p.Enabled), p.CreatedAt, p.UpdatedAt); err != nil {
+		return LLMProvider{}, mapSQLErr(err)
+	}
+	return p, nil
+}
+
+func (s *SQLStore) UpdateLLMProvider(ctx context.Context, id string, input UpdateLLMProviderInput) (LLMProvider, error) {
+	sets := []string{}
+	args := []any{}
+	add := func(column string, value any) {
+		args = append(args, value)
+		sets = append(sets, fmt.Sprintf("%s = %s", column, s.placeholder(len(args))))
+	}
+	if input.Name != nil {
+		add("name", strings.TrimSpace(*input.Name))
+	}
+	if input.Kind != nil {
+		add("kind", strings.TrimSpace(strings.ToLower(*input.Kind)))
+	}
+	if input.BaseURL != nil {
+		add("base_url", strings.TrimSpace(*input.BaseURL))
+	}
+	if input.APIKey != nil && strings.TrimSpace(*input.APIKey) != "" {
+		add("api_key", *input.APIKey)
+	}
+	if input.Enabled != nil {
+		add("enabled", boolInt(*input.Enabled))
+	}
+	add("updated_at", time.Now().UTC())
+	args = append(args, id)
+	query := fmt.Sprintf("UPDATE llm_providers SET %s WHERE id = %s", strings.Join(sets, ", "), s.placeholder(len(args)))
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return LLMProvider{}, mapSQLErr(err)
+	}
+	if count, err := result.RowsAffected(); err == nil && count == 0 {
+		return LLMProvider{}, ErrNotFound
+	}
+	return s.GetLLMProvider(ctx, id)
+}
+
+func (s *SQLStore) DeleteLLMProvider(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM llm_providers WHERE id = %s", s.placeholder(1)), id)
+	if err != nil {
+		return err
+	}
+	if count, err := result.RowsAffected(); err == nil && count == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

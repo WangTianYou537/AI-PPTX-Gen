@@ -38,6 +38,9 @@ type GenerateRequest struct {
 	JSONMode     bool      `json:"jsonMode"`
 	Tools        []ToolDefinition
 	ToolChoice   string
+	// Extra is merged into the provider-specific request body after the base payload is built.
+	// Use this for optional provider fields such as temperature/max_tokens/top_p.
+	Extra map[string]any
 }
 
 type GenerateResponse struct {
@@ -65,4 +68,27 @@ func normalizeBaseURL(baseURL, fallback string) string {
 		baseURL = fallback
 	}
 	return strings.TrimRight(baseURL, "/")
+}
+
+// mergePayloadJSON marshals base into a map and overlays extra keys on top.
+// Extra wins for conflicting keys so admins can override optional request fields.
+func mergePayloadJSON(base any, extra map[string]any) (any, error) {
+	if len(extra) == 0 {
+		return base, nil
+	}
+	raw, err := json.Marshal(base)
+	if err != nil {
+		return nil, err
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		return nil, err
+	}
+	if merged == nil {
+		merged = map[string]any{}
+	}
+	for key, value := range extra {
+		merged[key] = value
+	}
+	return merged, nil
 }

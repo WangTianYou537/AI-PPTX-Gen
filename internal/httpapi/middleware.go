@@ -28,7 +28,7 @@ func (s *Server) authenticate(r *http.Request) (store.User, bool) {
 		}
 		return store.User{}, false
 	}
-	session, err := s.store.GetSession(r.Context(), auth.HashToken(cookie.Value))
+	session, err := s.dataStore().GetSession(r.Context(), auth.HashToken(cookie.Value))
 	if err != nil {
 		if debugEnabled.Load() {
 			log.Printf("auth failed request_id=%s reason=session_lookup err=%v", requestID, err)
@@ -41,7 +41,7 @@ func (s *Server) authenticate(r *http.Request) (store.User, bool) {
 		}
 		return store.User{}, false
 	}
-	user, err := s.store.GetUserByID(r.Context(), session.UserID)
+	user, err := s.dataStore().GetUserByID(r.Context(), session.UserID)
 	if err != nil {
 		if debugEnabled.Load() {
 			log.Printf("auth failed request_id=%s reason=user_lookup user_id=%s err=%v", requestID, session.UserID, err)

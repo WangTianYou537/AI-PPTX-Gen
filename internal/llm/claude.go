@@ -68,10 +68,14 @@ func generateClaude(ctx context.Context, req GenerateRequest) (GenerateResponse,
 			payload.ToolChoice = map[string]string{"type": "tool", "name": req.ToolChoice}
 		}
 	}
+	bodyPayload, err := mergePayloadJSON(payload, req.Extra)
+	if err != nil {
+		return GenerateResponse{}, err
+	}
 	body, status, err := postJSON(ctx, baseURL+"/messages", map[string]string{
 		"x-api-key":         req.Config.APIKey,
 		"anthropic-version": "2023-06-01",
-	}, payload)
+	}, bodyPayload)
 	if err != nil {
 		return GenerateResponse{}, err
 	}

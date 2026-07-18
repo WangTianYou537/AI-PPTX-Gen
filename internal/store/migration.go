@@ -8,6 +8,7 @@ type Snapshot struct {
 	SystemSettings SystemSettings `json:"systemSettings"`
 	UserGroups     []UserGroup    `json:"userGroups"`
 	DailyUsages    []DailyUsage   `json:"dailyUsages"`
+	LLMProviders   []LLMProvider  `json:"llmProviders"`
 }
 
 func ExportSnapshot(ctx context.Context, source Store) (Snapshot, error) {
@@ -31,7 +32,11 @@ func ExportSnapshot(ctx context.Context, source Store) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{Users: users, PromptSettings: settings, SystemSettings: systemSettings, UserGroups: groups, DailyUsages: usages}, nil
+	providers, err := source.ListLLMProviders(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{Users: users, PromptSettings: settings, SystemSettings: systemSettings, UserGroups: groups, DailyUsages: usages, LLMProviders: providers}, nil
 }
 
 func ImportSnapshot(ctx context.Context, target Store, snapshot Snapshot) error {
@@ -54,6 +59,12 @@ func ImportSnapshot(ctx context.Context, target Store, snapshot Snapshot) error 
 	}
 	for _, user := range snapshot.Users {
 		_, err := target.CreateUser(ctx, CreateUserInput{ID: user.ID, Email: user.Email, Username: user.Username, PasswordHash: user.PasswordHash, Role: user.Role, Disabled: user.Disabled, GroupID: user.GroupID, DailyPPTLimit: user.DailyPPTLimit, DailySlideLimit: user.DailySlideLimit, SlideConcurrencyLimit: user.SlideConcurrencyLimit, CreatedAt: &user.CreatedAt, UpdatedAt: &user.UpdatedAt})
+		if err != nil && err != ErrAlreadyExists {
+			return err
+		}
+	}
+	for _, provider := range snapshot.LLMProviders {
+		_, err := target.CreateLLMProvider(ctx, CreateLLMProviderInput{ID: provider.ID, Name: provider.Name, Kind: provider.Kind, BaseURL: provider.BaseURL, APIKey: provider.APIKey, Enabled: provider.Enabled})
 		if err != nil && err != ErrAlreadyExists {
 			return err
 		}

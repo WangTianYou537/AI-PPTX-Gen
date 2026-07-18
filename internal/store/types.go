@@ -135,6 +135,34 @@ type QuotaReservation struct {
 	Slides int    `json:"slides"`
 }
 
+type LLMProvider struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind"` // openai | openai-responses | gemini | claude
+	BaseURL   string    `json:"baseURL"`
+	APIKey    string    `json:"apiKey"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type CreateLLMProviderInput struct {
+	ID      string
+	Name    string
+	Kind    string
+	BaseURL string
+	APIKey  string
+	Enabled bool
+}
+
+type UpdateLLMProviderInput struct {
+	Name    *string
+	Kind    *string
+	BaseURL *string
+	APIKey  *string
+	Enabled *bool
+}
+
 type ModelConfig struct {
 	Provider string `json:"provider"`
 	APIKey   string `json:"apiKey"`
@@ -143,9 +171,17 @@ type ModelConfig struct {
 }
 
 type GenerationRoleSettings struct {
-	SystemPrompt  string      `json:"systemPrompt"`
-	SupportsTools bool        `json:"supportsTools"`
-	ModelConfig   ModelConfig `json:"modelConfig"`
+	SystemPrompt  string `json:"systemPrompt"`
+	SupportsTools bool   `json:"supportsTools"`
+	// RequestJSON is a free-form JSON object merged into the provider request body.
+	// Example: {"temperature":0.2,"max_tokens":8192}
+	RequestJSON string `json:"requestJson"`
+	// ProviderID references a managed LLM provider. When set, credentials come from that provider.
+	ProviderID string `json:"providerId,omitempty"`
+	// Model is the selected model id when using ProviderID.
+	Model string `json:"model,omitempty"`
+	// ModelConfig is legacy inline provider config used when ProviderID is empty.
+	ModelConfig ModelConfig `json:"modelConfig"`
 }
 
 type PromptSettings struct {

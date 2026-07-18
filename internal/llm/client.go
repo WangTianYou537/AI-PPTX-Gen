@@ -31,6 +31,8 @@ func Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error
 	switch req.Config.Provider {
 	case ProviderOpenAI:
 		return generateOpenAI(ctx, req)
+	case ProviderOpenAIResponses:
+		return generateOpenAIResponses(ctx, req)
 	case ProviderGemini:
 		return generateGemini(ctx, req)
 	case ProviderClaude:
