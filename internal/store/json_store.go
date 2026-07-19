@@ -19,13 +19,15 @@ type JSONStore struct {
 }
 
 type jsonData struct {
-	Users          []storedUser   `json:"users"`
-	Sessions       []Session      `json:"sessions"`
-	PromptSettings PromptSettings `json:"promptSettings"`
-	SystemSettings SystemSettings `json:"systemSettings"`
-	UserGroups     []UserGroup    `json:"userGroups"`
-	DailyUsages    []DailyUsage   `json:"dailyUsages"`
-	LLMProviders   []LLMProvider  `json:"llmProviders"`
+	Users          []storedUser          `json:"users"`
+	Sessions       []Session             `json:"sessions"`
+	PromptSettings PromptSettings        `json:"promptSettings"`
+	SystemSettings SystemSettings        `json:"systemSettings"`
+	UserGroups     []UserGroup           `json:"userGroups"`
+	DailyUsages    []DailyUsage          `json:"dailyUsages"`
+	LLMProviders   []LLMProvider         `json:"llmProviders"`
+	GenerationJobs []GenerationJobRecord `json:"generationJobs"`
+	Uploads        []Upload              `json:"uploads"`
 }
 
 func NewJSONStore(path string) (*JSONStore, error) {
@@ -706,7 +708,7 @@ func (s *JSONStore) CreateLLMProvider(ctx context.Context, input CreateLLMProvid
 	if name == "" || kind == "" || strings.TrimSpace(input.APIKey) == "" {
 		return LLMProvider{}, ErrInvalidStore
 	}
-	provider := LLMProvider{ID: id, Name: name, Kind: kind, BaseURL: strings.TrimSpace(input.BaseURL), APIKey: input.APIKey, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
+	provider := LLMProvider{ID: id, Name: name, Kind: kind, BaseURL: strings.TrimSpace(input.BaseURL), APIKey: input.APIKey, Proxy: strings.TrimSpace(input.Proxy), Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
 	s.data.LLMProviders = append(s.data.LLMProviders, provider)
 	if err := s.saveLocked(); err != nil {
 		return LLMProvider{}, err
@@ -734,6 +736,9 @@ func (s *JSONStore) UpdateLLMProvider(ctx context.Context, id string, input Upda
 		if input.APIKey != nil && strings.TrimSpace(*input.APIKey) != "" {
 			s.data.LLMProviders[i].APIKey = *input.APIKey
 		}
+		if input.Proxy != nil {
+			s.data.LLMProviders[i].Proxy = strings.TrimSpace(*input.Proxy)
+		}
 		if input.Enabled != nil {
 			s.data.LLMProviders[i].Enabled = *input.Enabled
 		}
@@ -757,6 +762,172 @@ func (s *JSONStore) DeleteLLMProvider(ctx context.Context, id string) error {
 		}
 	}
 	return ErrNotFound
+}
+
+func (s *JSONStore) SaveGenerationJob(ctx context.Context, job GenerationJobRecord) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.data.GenerationJobs {
+		if s.data.GenerationJobs[i].ID == job.ID {
+			s.data.GenerationJobs[i] = job
+			return s.saveLocked()
+		}
+	}
+	s.data.GenerationJobs = append(s.data.GenerationJobs, job)
+	return s.saveLocked()
+}
+
+func (s *JSONStore) GetGenerationJob(ctx context.Context, id string) (GenerationJobRecord, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, job := range s.data.GenerationJobs {
+		if job.ID == id {
+			return job, nil
+		}
+	}
+	return GenerationJobRecord{}, ErrNotFound
+}
+
+func (s *JSONStore) ListGenerationJobsByUser(ctx context.Context, userID string, limit int) ([]GenerationJobRecord, error) {
+	_ = ctx
+	if limit <= 0 {
+		limit = 30
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]GenerationJobRecord, 0, limit)
+	for i := len(s.data.GenerationJobs) - 1; i >= 0; i-- {
+		job := s.data.GenerationJobs[i]
+		if job.UserID != userID {
+			continue
+		}
+		// Hide child/retry tasks from the main list.
+		if strings.TrimSpace(job.ParentJobID) != "" {
+			continue
+		}
+		out = append(out, job)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *JSONStore) ListChildGenerationJobs(ctx context.Context, parentJobID string, limit int) ([]GenerationJobRecord, error) {
+	_ = ctx
+	if limit <= 0 {
+		limit = 50
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]GenerationJobRecord, 0)
+	for _, job := range s.data.GenerationJobs {
+		if job.ParentJobID != parentJobID {
+			continue
+		}
+		out = append(out, job)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *JSONStore) ListOpenGenerationJobs(ctx context.Context, limit int) ([]GenerationJobRecord, error) {
+	_ = ctx
+	if limit <= 0 {
+		limit = 200
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]GenerationJobRecord, 0)
+	for _, job := range s.data.GenerationJobs {
+		if job.Status == "queued" || job.Status == "running" {
+			out = append(out, job)
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *JSONStore) DeleteGenerationJob(ctx context.Context, id string) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, job := range s.data.GenerationJobs {
+		if job.ID == id {
+			s.data.GenerationJobs = append(s.data.GenerationJobs[:i], s.data.GenerationJobs[i+1:]...)
+			return s.saveLocked()
+		}
+	}
+	return nil
+}
+
+func (s *JSONStore) CreateUpload(ctx context.Context, up Upload) (Upload, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if up.ID == "" {
+		up.ID = newID()
+	}
+	if up.CreatedAt.IsZero() {
+		up.CreatedAt = time.Now().UTC()
+	}
+	s.data.Uploads = append(s.data.Uploads, up)
+	if err := s.saveLocked(); err != nil {
+		return Upload{}, err
+	}
+	return up, nil
+}
+
+func (s *JSONStore) GetUpload(ctx context.Context, id string) (Upload, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, up := range s.data.Uploads {
+		if up.ID == id {
+			return up, nil
+		}
+	}
+	return Upload{}, ErrNotFound
+}
+
+func (s *JSONStore) ListUploadsByUser(ctx context.Context, userID string, limit int) ([]Upload, error) {
+	_ = ctx
+	if limit <= 0 {
+		limit = 50
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Upload, 0, limit)
+	for i := len(s.data.Uploads) - 1; i >= 0; i-- {
+		up := s.data.Uploads[i]
+		if up.UserID != userID {
+			continue
+		}
+		out = append(out, up)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *JSONStore) DeleteUpload(ctx context.Context, id string) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, up := range s.data.Uploads {
+		if up.ID == id {
+			s.data.Uploads = append(s.data.Uploads[:i], s.data.Uploads[i+1:]...)
+			return s.saveLocked()
+		}
+	}
+	return nil
 }
 
 func TodayUTC() string { return time.Now().UTC().Format("2006-01-02") }

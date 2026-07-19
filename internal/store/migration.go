@@ -64,7 +64,7 @@ func ImportSnapshot(ctx context.Context, target Store, snapshot Snapshot) error 
 		}
 	}
 	for _, provider := range snapshot.LLMProviders {
-		_, err := target.CreateLLMProvider(ctx, CreateLLMProviderInput{ID: provider.ID, Name: provider.Name, Kind: provider.Kind, BaseURL: provider.BaseURL, APIKey: provider.APIKey, Enabled: provider.Enabled})
+		_, err := target.CreateLLMProvider(ctx, CreateLLMProviderInput{ID: provider.ID, Name: provider.Name, Kind: provider.Kind, BaseURL: provider.BaseURL, APIKey: provider.APIKey, Proxy: provider.Proxy, Enabled: provider.Enabled})
 		if err != nil && err != ErrAlreadyExists {
 			return err
 		}

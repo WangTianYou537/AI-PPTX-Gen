@@ -21,7 +21,7 @@ func ListModels(ctx context.Context, cfg Config) ([]ModelInfo, error) {
 		return nil, err
 	}
 	switch cfg.Provider {
-	case ProviderOpenAI:
+	case ProviderOpenAI, ProviderOpenAIResponses:
 		return listOpenAIModels(ctx, cfg)
 	case ProviderGemini:
 		return listGeminiModels(ctx, cfg)
@@ -39,7 +39,7 @@ func listOpenAIModels(ctx context.Context, cfg Config) ([]ModelInfo, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	body, status, err := doHTTP(req)
+	body, status, err := doHTTP(req, cfg.Proxy)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func listGeminiModels(ctx context.Context, cfg Config) ([]ModelInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, status, err := doHTTP(req)
+	body, status, err := doHTTP(req, cfg.Proxy)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func listClaudeModels(ctx context.Context, cfg Config) ([]ModelInfo, error) {
 	}
 	req.Header.Set("x-api-key", cfg.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
-	body, status, err := doHTTP(req)
+	body, status, err := doHTTP(req, cfg.Proxy)
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +161,13 @@ func listClaudeModels(ctx context.Context, cfg Config) ([]ModelInfo, error) {
 	return out, nil
 }
 
-func doHTTP(req *http.Request) ([]byte, int, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+func doHTTP(req *http.Request, proxy string) ([]byte, int, error) {
+	client, err := httpClientFor(proxy)
+	if err != nil {
+		return nil, 0, err
+	}
+	// list models can use a shorter timeout than long generation calls
+	client = &http.Client{Timeout: 30 * time.Second, Transport: client.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, err

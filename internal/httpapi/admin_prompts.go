@@ -11,6 +11,7 @@ import (
 type promptSettingsRequest struct {
 	Architect store.GenerationRoleSettings `json:"architect"`
 	SVG       store.GenerationRoleSettings `json:"svg"`
+	Theme     store.GenerationRoleSettings `json:"theme"`
 }
 
 func (s *Server) handleAdminPrompts(w http.ResponseWriter, r *http.Request) {
@@ -36,8 +37,20 @@ func (s *Server) handleAdminPrompts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if err := validateRoleSettings("主题色策划师", input.Theme); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		user, _ := s.currentUser(r)
-		settings := store.PromptSettings{Architect: input.Architect, SVG: input.SVG, UpdatedBy: user.ID}
+		// Preserve workflow JSON when saving roles.
+		prev, _ := s.promptSettings(r)
+		settings := store.PromptSettings{
+			Architect:             input.Architect,
+			SVG:                   input.SVG,
+			Theme:                 input.Theme,
+			ArchitectWorkflowJSON: prev.ArchitectWorkflowJSON,
+			UpdatedBy:             user.ID,
+		}
 		if err := s.dataStore().SavePromptSettings(r.Context(), settings); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -62,6 +75,7 @@ func (s *Server) handleAdminPromptsReset(w http.ResponseWriter, r *http.Request)
 	}
 	settings.Architect.SystemPrompt = ppt.DefaultArchitectSystemPrompt
 	settings.SVG.SystemPrompt = ppt.DefaultSVGSystemPrompt
+	settings.Theme.SystemPrompt = ppt.DefaultThemeSystemPrompt
 	settings.UpdatedBy = user.ID
 	if err := s.dataStore().SavePromptSettings(r.Context(), settings); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

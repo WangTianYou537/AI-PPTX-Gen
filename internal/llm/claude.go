@@ -2,7 +2,9 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"strings"
 )
 
 const defaultClaudeBaseURL = "https://api.anthropic.com/v1"
@@ -24,7 +26,7 @@ type claudeTool struct {
 
 type claudeMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
 }
 
 type claudeResponse struct {
@@ -53,7 +55,7 @@ func generateClaude(ctx context.Context, req GenerateRequest) (GenerateResponse,
 		if role != "assistant" {
 			role = "user"
 		}
-		messages = append(messages, claudeMessage{Role: role, Content: msg.Content})
+		messages = append(messages, claudeMessage{Role: role, Content: claudeContentFromMessage(msg)})
 	}
 
 	payload := claudeRequest{
@@ -68,14 +70,14 @@ func generateClaude(ctx context.Context, req GenerateRequest) (GenerateResponse,
 			payload.ToolChoice = map[string]string{"type": "tool", "name": req.ToolChoice}
 		}
 	}
-	bodyPayload, err := mergePayloadJSON(payload, req.Extra)
+	bodyPayload, err := requestBody(payload, req)
 	if err != nil {
 		return GenerateResponse{}, err
 	}
 	body, status, err := postJSON(ctx, baseURL+"/messages", map[string]string{
 		"x-api-key":         req.Config.APIKey,
 		"anthropic-version": "2023-06-01",
-	}, bodyPayload)
+	}, bodyPayload, req.Config.Proxy)
 	if err != nil {
 		return GenerateResponse{}, err
 	}
@@ -101,4 +103,58 @@ func generateClaude(ctx context.Context, req GenerateRequest) (GenerateResponse,
 		}
 	}
 	return GenerateResponse{}, NewUserError("Claude 响应中没有文本内容")
+}
+
+func claudeContentFromMessage(msg Message) any {
+	if len(msg.Parts) == 0 {
+		return msg.Content
+	}
+	parts := make([]map[string]any, 0, len(msg.Parts))
+	for _, p := range msg.Parts {
+		switch strings.ToLower(strings.TrimSpace(p.Type)) {
+		case "file", "inline_data", "inline-data", "media":
+			if len(p.Data) == 0 {
+				continue
+			}
+			mime := strings.TrimSpace(p.MIMEType)
+			if mime == "" {
+				mime = "application/octet-stream"
+			}
+			if strings.HasPrefix(mime, "image/") {
+				parts = append(parts, map[string]any{
+					"type": "image",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": mime,
+						"data":       base64.StdEncoding.EncodeToString(p.Data),
+					},
+				})
+			} else if strings.Contains(mime, "pdf") {
+				// Claude document block for PDFs when supported.
+				parts = append(parts, map[string]any{
+					"type": "document",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": mime,
+						"data":       base64.StdEncoding.EncodeToString(p.Data),
+					},
+				})
+			} else {
+				// Fallback as text note if unsupported binary.
+				parts = append(parts, map[string]any{
+					"type": "text",
+					"text": "[binary attachment omitted: " + p.Filename + "]",
+				})
+			}
+		default:
+			if strings.TrimSpace(p.Text) == "" {
+				continue
+			}
+			parts = append(parts, map[string]any{"type": "text", "text": p.Text})
+		}
+	}
+	if len(parts) == 0 {
+		return msg.Content
+	}
+	return parts
 }

@@ -23,17 +23,21 @@ const (
 
 // Job is a user-owned asynchronous generation task.
 type Job struct {
-	ID         string          `json:"id"`
-	UserID     string          `json:"userId"`
-	Type       Type            `json:"type"`
-	Status     Status          `json:"status"`
-	Progress   int             `json:"progress"`
-	Error      string          `json:"error,omitempty"`
-	Result     json.RawMessage `json:"result,omitempty"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
-	StartedAt  *time.Time      `json:"startedAt,omitempty"`
-	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
+	ID          string          `json:"id"`
+	UserID      string          `json:"userId"`
+	Type        Type            `json:"type"`
+	Status      Status          `json:"status"`
+	Progress    int             `json:"progress"`
+	Error       string          `json:"error,omitempty"`
+	ParentJobID string          `json:"parentJobId,omitempty"`
+	Label       string          `json:"label,omitempty"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	// Children is populated only for detail views.
+	Children   []*Job     `json:"children,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 }
 
 type OutlineResult struct {
@@ -41,6 +45,8 @@ type OutlineResult struct {
 }
 
 type SVGResult struct {
-	Slides any `json:"slides"`
-	Quota  any `json:"quota,omitempty"`
+	Slides  any `json:"slides"`
+	Outline any `json:"outline,omitempty"`
+	Failed  int `json:"failed,omitempty"`
+	Quota   any `json:"quota,omitempty"`
 }

@@ -22,6 +22,8 @@ type PresentationOutline struct {
 	Audience string         `json:"audience"`
 	Style    string         `json:"style"`
 	Slides   []SlideOutline `json:"slides"`
+	// VisualDesign is optional deck-wide palette produced by theme planner.
+	VisualDesign *VisualDesignLock `json:"visualDesign,omitempty"`
 }
 
 type SVGRequest struct {
@@ -33,9 +35,13 @@ type SlideSVG struct {
 	SlideID string `json:"slideId"`
 	Title   string `json:"title"`
 	SVG     string `json:"svg"`
+	// Error is set when this slide failed generation; SVG may be empty.
+	Error string `json:"error,omitempty"`
 }
 
 type SVGResponse struct {
 	Slides []SlideSVG `json:"slides"`
-	Quota  any        `json:"quota,omitempty"`
+	// Failed is the number of slides that failed generation.
+	Failed int `json:"failed,omitempty"`
+	Quota  any `json:"quota,omitempty"`
 }

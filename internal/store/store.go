@@ -45,4 +45,14 @@ type Store interface {
 	CreateLLMProvider(ctx context.Context, input CreateLLMProviderInput) (LLMProvider, error)
 	UpdateLLMProvider(ctx context.Context, id string, input UpdateLLMProviderInput) (LLMProvider, error)
 	DeleteLLMProvider(ctx context.Context, id string) error
+	SaveGenerationJob(ctx context.Context, job GenerationJobRecord) error
+	GetGenerationJob(ctx context.Context, id string) (GenerationJobRecord, error)
+	ListGenerationJobsByUser(ctx context.Context, userID string, limit int) ([]GenerationJobRecord, error)
+	ListOpenGenerationJobs(ctx context.Context, limit int) ([]GenerationJobRecord, error)
+	ListChildGenerationJobs(ctx context.Context, parentJobID string, limit int) ([]GenerationJobRecord, error)
+	DeleteGenerationJob(ctx context.Context, id string) error
+	CreateUpload(ctx context.Context, up Upload) (Upload, error)
+	GetUpload(ctx context.Context, id string) (Upload, error)
+	ListUploadsByUser(ctx context.Context, userID string, limit int) ([]Upload, error)
+	DeleteUpload(ctx context.Context, id string) error
 }

@@ -15,6 +15,7 @@ type llmProviderRequest struct {
 	Kind    *string `json:"kind"`
 	BaseURL *string `json:"baseURL"`
 	APIKey  *string `json:"apiKey"`
+	Proxy   *string `json:"proxy"`
 	Enabled *bool   `json:"enabled"`
 }
 
@@ -55,12 +56,16 @@ func (s *Server) handleAdminProviders(w http.ResponseWriter, r *http.Request) {
 		if input.BaseURL != nil {
 			baseURL = *input.BaseURL
 		}
+		proxy := ""
+		if input.Proxy != nil {
+			proxy = strings.TrimSpace(*input.Proxy)
+		}
 		enabled := true
 		if input.Enabled != nil {
 			enabled = *input.Enabled
 		}
 		provider, err := s.dataStore().CreateLLMProvider(r.Context(), store.CreateLLMProviderInput{
-			Name: *input.Name, Kind: normalizeProviderKind(*input.Kind), BaseURL: baseURL, APIKey: *input.APIKey, Enabled: enabled,
+			Name: *input.Name, Kind: normalizeProviderKind(*input.Kind), BaseURL: baseURL, APIKey: *input.APIKey, Proxy: proxy, Enabled: enabled,
 		})
 		if err != nil {
 			handleAdminStoreError(w, err)
@@ -96,12 +101,20 @@ func (s *Server) handleAdminProvider(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "请求 JSON 格式不正确")
 			return
 		}
-		if input.Kind != nil && !validProviderKind(*input.Kind) {
-			writeError(w, http.StatusBadRequest, "提供商类型不正确")
-			return
+		if input.Kind != nil {
+			if !validProviderKind(*input.Kind) {
+				writeError(w, http.StatusBadRequest, "提供商类型不正确")
+				return
+			}
+			normalized := normalizeProviderKind(*input.Kind)
+			input.Kind = &normalized
+		}
+		// Ignore redacted placeholders so "leave blank to keep" works safely.
+		if input.APIKey != nil && (strings.TrimSpace(*input.APIKey) == "" || strings.Contains(*input.APIKey, "*")) {
+			input.APIKey = nil
 		}
 		provider, err := s.dataStore().UpdateLLMProvider(r.Context(), id, store.UpdateLLMProviderInput{
-			Name: input.Name, Kind: input.Kind, BaseURL: input.BaseURL, APIKey: input.APIKey, Enabled: input.Enabled,
+			Name: input.Name, Kind: input.Kind, BaseURL: input.BaseURL, APIKey: input.APIKey, Proxy: input.Proxy, Enabled: input.Enabled,
 		})
 		if err != nil {
 			handleAdminStoreError(w, err)
@@ -146,7 +159,7 @@ func (s *Server) handleAdminProviderModels(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// Optional temporary override via POST body for unsaved form values.
-	cfg := llm.Config{Provider: llm.Provider(provider.Kind), APIKey: provider.APIKey, BaseURL: provider.BaseURL, Model: "dummy"}
+	cfg := llm.Config{Provider: llm.Provider(provider.Kind), APIKey: provider.APIKey, BaseURL: provider.BaseURL, Proxy: provider.Proxy, Model: "dummy"}
 	if r.Method == http.MethodPost {
 		var input llmProviderRequest
 		if err := json.NewDecoder(r.Body).Decode(&input); err == nil {
@@ -158,6 +171,9 @@ func (s *Server) handleAdminProviderModels(w http.ResponseWriter, r *http.Reques
 			}
 			if input.APIKey != nil && strings.TrimSpace(*input.APIKey) != "" && !strings.Contains(*input.APIKey, "*") {
 				cfg.APIKey = *input.APIKey
+			}
+			if input.Proxy != nil {
+				cfg.Proxy = strings.TrimSpace(*input.Proxy)
 			}
 		}
 	}

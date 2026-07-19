@@ -26,7 +26,7 @@ func NormalizePromptSettings(architectSystem, svgSystem, legacyArchitect, legacy
 	return architectSystem, svgSystem
 }
 
-// ParseRequestJSON parses optional admin-provided request body extensions.
+// ParseRequestJSON parses optional admin-provided request body extras (incremental fields).
 func ParseRequestJSON(raw string) (map[string]any, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -42,7 +42,7 @@ func ParseRequestJSON(raw string) (map[string]any, error) {
 	return payload, nil
 }
 
-// ValidateRequestJSON ensures admin request JSON is empty or a JSON object.
+// ValidateRequestJSON ensures admin request extras are empty or a JSON object.
 func ValidateRequestJSON(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

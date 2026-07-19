@@ -64,5 +64,6 @@ func roleModelConfig(config store.ModelConfig) llm.Config {
 		APIKey:   config.APIKey,
 		BaseURL:  config.BaseURL,
 		Model:    config.Model,
+		Proxy:    config.Proxy,
 	}
 }

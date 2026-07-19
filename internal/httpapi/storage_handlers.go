@@ -22,6 +22,7 @@ func (s *Server) handleAdminStorage(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	s.ensureJobs()
 	cfg, ok := s.stores.Config()
 	var cfgPtr *store.Config
 	if ok {
@@ -61,6 +62,7 @@ func (s *Server) handleAdminStorageSwitch(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.ensureJobs()
 	cfg, ok := s.stores.Config()
 	writeJSON(w, http.StatusOK, storageResponse{Storage: &cfg, StorageConfigured: ok, SupportedStorage: store.SupportedStorageOptions()})
 }

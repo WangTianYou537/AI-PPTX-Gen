@@ -93,3 +93,31 @@ func (unconfiguredStore) UpdateLLMProvider(context.Context, string, store.Update
 func (unconfiguredStore) DeleteLLMProvider(context.Context, string) error {
 	return store.ErrInvalidStore
 }
+func (unconfiguredStore) SaveGenerationJob(context.Context, store.GenerationJobRecord) error {
+	return store.ErrInvalidStore
+}
+func (unconfiguredStore) GetGenerationJob(context.Context, string) (store.GenerationJobRecord, error) {
+	return store.GenerationJobRecord{}, store.ErrInvalidStore
+}
+func (unconfiguredStore) ListGenerationJobsByUser(context.Context, string, int) ([]store.GenerationJobRecord, error) {
+	return nil, store.ErrInvalidStore
+}
+func (unconfiguredStore) ListOpenGenerationJobs(context.Context, int) ([]store.GenerationJobRecord, error) {
+	return nil, store.ErrInvalidStore
+}
+func (unconfiguredStore) DeleteGenerationJob(context.Context, string) error {
+	return store.ErrInvalidStore
+}
+func (unconfiguredStore) CreateUpload(context.Context, store.Upload) (store.Upload, error) {
+	return store.Upload{}, store.ErrInvalidStore
+}
+func (unconfiguredStore) GetUpload(context.Context, string) (store.Upload, error) {
+	return store.Upload{}, store.ErrInvalidStore
+}
+func (unconfiguredStore) ListUploadsByUser(context.Context, string, int) ([]store.Upload, error) {
+	return nil, store.ErrInvalidStore
+}
+func (unconfiguredStore) DeleteUpload(context.Context, string) error { return store.ErrInvalidStore }
+func (unconfiguredStore) ListChildGenerationJobs(context.Context, string, int) ([]store.GenerationJobRecord, error) {
+	return nil, store.ErrInvalidStore
+}

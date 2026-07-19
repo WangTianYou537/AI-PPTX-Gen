@@ -2,8 +2,10 @@ package llm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/url"
+	"strings"
 )
 
 const defaultGeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta"
@@ -20,7 +22,13 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text string `json:"text"`
+	Text       string            `json:"text,omitempty"`
+	InlineData *geminiInlineData `json:"inline_data,omitempty"`
+}
+
+type geminiInlineData struct {
+	MIMEType string `json:"mime_type"`
+	Data     string `json:"data"`
 }
 
 type geminiResponse struct {
@@ -37,7 +45,11 @@ func generateGemini(ctx context.Context, req GenerateRequest) (GenerateResponse,
 		if msg.Role == "assistant" {
 			role = "model"
 		}
-		contents = append(contents, geminiContent{Role: role, Parts: []geminiPart{{Text: msg.Content}}})
+		parts := geminiPartsFromMessage(msg)
+		if len(parts) == 0 {
+			continue
+		}
+		contents = append(contents, geminiContent{Role: role, Parts: parts})
 	}
 
 	payload := geminiRequest{Contents: contents}
@@ -48,13 +60,13 @@ func generateGemini(ctx context.Context, req GenerateRequest) (GenerateResponse,
 		payload.GenerationConfig = map[string]string{"responseMimeType": "application/json"}
 	}
 
-	bodyPayload, err := mergePayloadJSON(payload, req.Extra)
+	bodyPayload, err := requestBody(payload, req)
 	if err != nil {
 		return GenerateResponse{}, err
 	}
 
 	endpoint := baseURL + "/models/" + url.PathEscape(req.Config.Model) + ":generateContent?key=" + url.QueryEscape(req.Config.APIKey)
-	body, status, err := postJSON(ctx, endpoint, nil, bodyPayload)
+	body, status, err := postJSON(ctx, endpoint, nil, bodyPayload, req.Config.Proxy)
 	if err != nil {
 		return GenerateResponse{}, err
 	}
@@ -74,4 +86,36 @@ func generateGemini(ctx context.Context, req GenerateRequest) (GenerateResponse,
 		}
 	}
 	return GenerateResponse{}, NewUserError("Gemini 响应中没有文本内容")
+}
+
+func geminiPartsFromMessage(msg Message) []geminiPart {
+	if len(msg.Parts) > 0 {
+		out := make([]geminiPart, 0, len(msg.Parts))
+		for _, p := range msg.Parts {
+			switch strings.ToLower(strings.TrimSpace(p.Type)) {
+			case "file", "inline_data", "inline-data", "media":
+				if len(p.Data) == 0 {
+					continue
+				}
+				mime := strings.TrimSpace(p.MIMEType)
+				if mime == "" {
+					mime = "application/octet-stream"
+				}
+				out = append(out, geminiPart{InlineData: &geminiInlineData{
+					MIMEType: mime,
+					Data:     base64.StdEncoding.EncodeToString(p.Data),
+				}})
+			default:
+				if strings.TrimSpace(p.Text) == "" {
+					continue
+				}
+				out = append(out, geminiPart{Text: p.Text})
+			}
+		}
+		return out
+	}
+	if strings.TrimSpace(msg.Content) == "" {
+		return nil
+	}
+	return []geminiPart{{Text: msg.Content}}
 }

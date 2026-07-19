@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -136,11 +137,14 @@ type QuotaReservation struct {
 }
 
 type LLMProvider struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Kind      string    `json:"kind"` // openai | openai-responses | gemini | claude
-	BaseURL   string    `json:"baseURL"`
-	APIKey    string    `json:"apiKey"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Kind    string `json:"kind"` // openai | openai-responses | gemini | claude
+	BaseURL string `json:"baseURL"`
+	APIKey  string `json:"apiKey"`
+	// Proxy is an optional HTTP/HTTPS/SOCKS proxy URL for outbound LLM requests.
+	// Example: http://127.0.0.1:7890  or socks5://127.0.0.1:1080
+	Proxy     string    `json:"proxy,omitempty"`
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -152,6 +156,7 @@ type CreateLLMProviderInput struct {
 	Kind    string
 	BaseURL string
 	APIKey  string
+	Proxy   string
 	Enabled bool
 }
 
@@ -160,7 +165,38 @@ type UpdateLLMProviderInput struct {
 	Kind    *string
 	BaseURL *string
 	APIKey  *string
+	Proxy   *string
 	Enabled *bool
+}
+
+type Upload struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"userId"`
+	Filename    string    `json:"filename"`
+	ContentType string    `json:"contentType"`
+	SizeBytes   int64     `json:"sizeBytes"`
+	Path        string    `json:"path"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type GenerationJobRecord struct {
+	ID       string `json:"id"`
+	UserID   string `json:"userId"`
+	Type     string `json:"type"`
+	Status   string `json:"status"`
+	Progress int    `json:"progress"`
+	Error    string `json:"error,omitempty"`
+	// ParentJobID links retry/AI-edit tasks under an original generation job.
+	// Empty means top-level job shown in the main task list.
+	ParentJobID string `json:"parentJobId,omitempty"`
+	// Label is a short human description, e.g. "重试 slide-3" / "AI修改 slide-1" / "批量重试失败页".
+	Label       string          `json:"label,omitempty"`
+	PayloadJSON json.RawMessage `json:"payloadJson,omitempty"`
+	ResultJSON  json.RawMessage `json:"resultJson,omitempty"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
+	StartedAt   *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt  *time.Time      `json:"finishedAt,omitempty"`
 }
 
 type ModelConfig struct {
@@ -168,25 +204,31 @@ type ModelConfig struct {
 	APIKey   string `json:"apiKey"`
 	BaseURL  string `json:"baseURL"`
 	Model    string `json:"model"`
+	Proxy    string `json:"proxy,omitempty"`
 }
 
 type GenerationRoleSettings struct {
 	SystemPrompt  string `json:"systemPrompt"`
 	SupportsTools bool   `json:"supportsTools"`
-	// RequestJSON is a free-form JSON object merged into the provider request body.
-	// Example: {"temperature":0.2,"max_tokens":8192}
+	// RequestJSON is an optional JSON object merged into the provider default request body.
+	// Example: {"temperature":0.2,"max_tokens":8192,"top_p":0.9}
 	RequestJSON string `json:"requestJson"`
 	// ProviderID references a managed LLM provider. When set, credentials come from that provider.
 	ProviderID string `json:"providerId,omitempty"`
 	// Model is the selected model id when using ProviderID.
 	Model string `json:"model,omitempty"`
-	// ModelConfig is legacy inline provider config used when ProviderID is empty.
+	// ModelConfig is filled at runtime after resolving ProviderID + Model.
 	ModelConfig ModelConfig `json:"modelConfig"`
 }
 
 type PromptSettings struct {
 	Architect GenerationRoleSettings `json:"architect"`
 	SVG       GenerationRoleSettings `json:"svg"`
+	// Theme is the theme-color planner role: turns free-form visual style into a locked palette.
+	Theme GenerationRoleSettings `json:"theme"`
+	// ArchitectWorkflowJSON stores the configurable agent workflow for outline generation.
+	// JSON shape: {version,name,steps:[{id,kind,name,enabled,condition,providerId,model,systemPrompt,requestJson}]}
+	ArchitectWorkflowJSON string `json:"architectWorkflowJson,omitempty"`
 	// Deprecated fields are kept so older JSON stores can be read and migrated lazily.
 	ArchitectSystemPrompt string    `json:"architectSystemPrompt,omitempty"`
 	SVGSystemPrompt       string    `json:"svgSystemPrompt,omitempty"`

@@ -122,4 +122,72 @@ var sqlMigrations = []sqlMigration{
 			"ALTER TABLE prompt_settings ADD COLUMN svg_model TEXT NOT NULL DEFAULT ''",
 		},
 	},
+	{
+		Version: 4,
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS generation_jobs (
+				id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				type TEXT NOT NULL,
+				status TEXT NOT NULL,
+				progress INTEGER NOT NULL DEFAULT 0,
+				error TEXT NOT NULL DEFAULT '',
+				payload_json TEXT NOT NULL DEFAULT '',
+				result_json TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL,
+				started_at TIMESTAMP NULL,
+				finished_at TIMESTAMP NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_generation_jobs_user_id ON generation_jobs(user_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_generation_jobs_status ON generation_jobs(status)`,
+		},
+	},
+	{
+		Version:              5,
+		AllowDuplicateColumn: true,
+		Statements: []string{
+			"ALTER TABLE llm_providers ADD COLUMN proxy TEXT NOT NULL DEFAULT ''",
+		},
+	},
+	{
+		Version:              6,
+		AllowDuplicateColumn: true,
+		Statements: []string{
+			"ALTER TABLE prompt_settings ADD COLUMN architect_workflow_json TEXT NOT NULL DEFAULT ''",
+			`CREATE TABLE IF NOT EXISTS uploads (
+				id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				filename TEXT NOT NULL,
+				content_type TEXT NOT NULL DEFAULT '',
+				size_bytes INTEGER NOT NULL DEFAULT 0,
+				path TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_uploads_user_id ON uploads(user_id)`,
+		},
+	},
+	{
+		Version:              7,
+		AllowDuplicateColumn: true,
+		Statements: []string{
+			"ALTER TABLE prompt_settings ADD COLUMN theme_system_prompt TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE prompt_settings ADD COLUMN theme_model_provider TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE prompt_settings ADD COLUMN theme_model_api_key TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE prompt_settings ADD COLUMN theme_model_base_url TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE prompt_settings ADD COLUMN theme_model_model TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE prompt_settings ADD COLUMN theme_request_json TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE prompt_settings ADD COLUMN theme_provider_id TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE prompt_settings ADD COLUMN theme_model TEXT NOT NULL DEFAULT ''",
+		},
+	},
+	{
+		Version:              8,
+		AllowDuplicateColumn: true,
+		Statements: []string{
+			"ALTER TABLE generation_jobs ADD COLUMN parent_job_id TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE generation_jobs ADD COLUMN label TEXT NOT NULL DEFAULT ''",
+			`CREATE INDEX IF NOT EXISTS idx_generation_jobs_parent_job_id ON generation_jobs(parent_job_id)`,
+		},
+	},
 }

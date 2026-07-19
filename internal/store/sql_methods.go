@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -205,12 +206,15 @@ func (s *SQLStore) DeleteSession(ctx context.Context, tokenHash string) error {
 
 func (s *SQLStore) GetPromptSettings(ctx context.Context) (PromptSettings, error) {
 	var settings PromptSettings
-	err := s.db.QueryRowContext(ctx, `SELECT architect_system_prompt, svg_system_prompt,
+	err := s.db.QueryRowContext(ctx, `SELECT architect_system_prompt, svg_system_prompt, COALESCE(theme_system_prompt, ''),
 		architect_model_provider, architect_model_api_key, architect_model_base_url, architect_model_model, COALESCE(architect_request_json, ''), COALESCE(architect_provider_id, ''), COALESCE(architect_model, ''),
 		svg_model_provider, svg_model_api_key, svg_model_base_url, svg_model_model, COALESCE(svg_request_json, ''), COALESCE(svg_provider_id, ''), COALESCE(svg_model, ''),
+		COALESCE(theme_model_provider, ''), COALESCE(theme_model_api_key, ''), COALESCE(theme_model_base_url, ''), COALESCE(theme_model_model, ''), COALESCE(theme_request_json, ''), COALESCE(theme_provider_id, ''), COALESCE(theme_model, ''),
+		COALESCE(architect_workflow_json, ''),
 		updated_at, updated_by FROM prompt_settings WHERE id = 1`).Scan(
 		&settings.Architect.SystemPrompt,
 		&settings.SVG.SystemPrompt,
+		&settings.Theme.SystemPrompt,
 		&settings.Architect.ModelConfig.Provider,
 		&settings.Architect.ModelConfig.APIKey,
 		&settings.Architect.ModelConfig.BaseURL,
@@ -225,6 +229,14 @@ func (s *SQLStore) GetPromptSettings(ctx context.Context) (PromptSettings, error
 		&settings.SVG.RequestJSON,
 		&settings.SVG.ProviderID,
 		&settings.SVG.Model,
+		&settings.Theme.ModelConfig.Provider,
+		&settings.Theme.ModelConfig.APIKey,
+		&settings.Theme.ModelConfig.BaseURL,
+		&settings.Theme.ModelConfig.Model,
+		&settings.Theme.RequestJSON,
+		&settings.Theme.ProviderID,
+		&settings.Theme.Model,
+		&settings.ArchitectWorkflowJSON,
 		&settings.UpdatedAt,
 		&settings.UpdatedBy,
 	)
@@ -244,6 +256,9 @@ func (s *SQLStore) SavePromptSettings(ctx context.Context, settings PromptSettin
 	}
 	if settings.SVG.ProviderID != "" && settings.SVG.Model != "" {
 		settings.SVG.ModelConfig.Model = settings.SVG.Model
+	}
+	if settings.Theme.ProviderID != "" && settings.Theme.Model != "" {
+		settings.Theme.ModelConfig.Model = settings.Theme.Model
 	}
 	var err error
 	if s.dialect == "postgres" {
@@ -302,8 +317,23 @@ func (s *SQLStore) SavePromptSettings(ctx context.Context, settings PromptSettin
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, fmt.Sprintf("UPDATE prompt_settings SET architect_provider_id = %s, architect_model = %s, svg_provider_id = %s, svg_model = %s WHERE id = 1", s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4)),
-		settings.Architect.ProviderID, settings.Architect.Model, settings.SVG.ProviderID, settings.SVG.Model)
+	_, err = s.db.ExecContext(ctx, fmt.Sprintf(`UPDATE prompt_settings SET
+		architect_provider_id = %s, architect_model = %s,
+		svg_provider_id = %s, svg_model = %s,
+		theme_system_prompt = %s,
+		theme_model_provider = %s, theme_model_api_key = %s, theme_model_base_url = %s, theme_model_model = %s, theme_request_json = %s,
+		theme_provider_id = %s, theme_model = %s,
+		architect_workflow_json = %s
+		WHERE id = 1`,
+		s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5),
+		s.placeholder(6), s.placeholder(7), s.placeholder(8), s.placeholder(9), s.placeholder(10),
+		s.placeholder(11), s.placeholder(12), s.placeholder(13)),
+		settings.Architect.ProviderID, settings.Architect.Model,
+		settings.SVG.ProviderID, settings.SVG.Model,
+		settings.Theme.SystemPrompt,
+		settings.Theme.ModelConfig.Provider, settings.Theme.ModelConfig.APIKey, settings.Theme.ModelConfig.BaseURL, settings.Theme.ModelConfig.Model, settings.Theme.RequestJSON,
+		settings.Theme.ProviderID, settings.Theme.Model,
+		settings.ArchitectWorkflowJSON)
 	return err
 }
 
@@ -646,7 +676,7 @@ func nullableInt(value *int) any {
 }
 
 func (s *SQLStore) ListLLMProviders(ctx context.Context) ([]LLMProvider, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, name, kind, base_url, api_key, enabled, created_at, updated_at FROM llm_providers ORDER BY created_at ASC")
+	rows, err := s.db.QueryContext(ctx, "SELECT id, name, kind, base_url, api_key, COALESCE(proxy, ''), enabled, created_at, updated_at FROM llm_providers ORDER BY created_at ASC")
 	if err != nil {
 		return nil, err
 	}
@@ -655,7 +685,7 @@ func (s *SQLStore) ListLLMProviders(ctx context.Context) ([]LLMProvider, error) 
 	for rows.Next() {
 		var p LLMProvider
 		var enabled int
-		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &p.Proxy, &enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Enabled = enabled != 0
@@ -665,10 +695,10 @@ func (s *SQLStore) ListLLMProviders(ctx context.Context) ([]LLMProvider, error) 
 }
 
 func (s *SQLStore) GetLLMProvider(ctx context.Context, id string) (LLMProvider, error) {
-	query := fmt.Sprintf("SELECT id, name, kind, base_url, api_key, enabled, created_at, updated_at FROM llm_providers WHERE id = %s", s.placeholder(1))
+	query := fmt.Sprintf("SELECT id, name, kind, base_url, api_key, COALESCE(proxy, ''), enabled, created_at, updated_at FROM llm_providers WHERE id = %s", s.placeholder(1))
 	var p LLMProvider
 	var enabled int
-	err := s.db.QueryRowContext(ctx, query, id).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &enabled, &p.CreatedAt, &p.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, query, id).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &p.Proxy, &enabled, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return LLMProvider{}, mapSQLErr(err)
 	}
@@ -687,10 +717,10 @@ func (s *SQLStore) CreateLLMProvider(ctx context.Context, input CreateLLMProvide
 	if name == "" || kind == "" || strings.TrimSpace(input.APIKey) == "" {
 		return LLMProvider{}, ErrInvalidStore
 	}
-	p := LLMProvider{ID: id, Name: name, Kind: kind, BaseURL: strings.TrimSpace(input.BaseURL), APIKey: input.APIKey, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
-	query := fmt.Sprintf("INSERT INTO llm_providers (id, name, kind, base_url, api_key, enabled, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-		s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5), s.placeholder(6), s.placeholder(7), s.placeholder(8))
-	if _, err := s.db.ExecContext(ctx, query, p.ID, p.Name, p.Kind, p.BaseURL, p.APIKey, boolInt(p.Enabled), p.CreatedAt, p.UpdatedAt); err != nil {
+	p := LLMProvider{ID: id, Name: name, Kind: kind, BaseURL: strings.TrimSpace(input.BaseURL), APIKey: input.APIKey, Proxy: strings.TrimSpace(input.Proxy), Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
+	query := fmt.Sprintf("INSERT INTO llm_providers (id, name, kind, base_url, api_key, proxy, enabled, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+		s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5), s.placeholder(6), s.placeholder(7), s.placeholder(8), s.placeholder(9))
+	if _, err := s.db.ExecContext(ctx, query, p.ID, p.Name, p.Kind, p.BaseURL, p.APIKey, p.Proxy, boolInt(p.Enabled), p.CreatedAt, p.UpdatedAt); err != nil {
 		return LLMProvider{}, mapSQLErr(err)
 	}
 	return p, nil
@@ -714,6 +744,9 @@ func (s *SQLStore) UpdateLLMProvider(ctx context.Context, id string, input Updat
 	}
 	if input.APIKey != nil && strings.TrimSpace(*input.APIKey) != "" {
 		add("api_key", *input.APIKey)
+	}
+	if input.Proxy != nil {
+		add("proxy", strings.TrimSpace(*input.Proxy))
 	}
 	if input.Enabled != nil {
 		add("enabled", boolInt(*input.Enabled))
@@ -740,4 +773,198 @@ func (s *SQLStore) DeleteLLMProvider(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *SQLStore) SaveGenerationJob(ctx context.Context, job GenerationJobRecord) error {
+	payload := string(job.PayloadJSON)
+	result := string(job.ResultJSON)
+	if s.dialect == "postgres" {
+		_, err := s.db.ExecContext(ctx, `INSERT INTO generation_jobs (
+			id, user_id, type, status, progress, error, parent_job_id, label, payload_json, result_json, created_at, updated_at, started_at, finished_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			ON CONFLICT (id) DO UPDATE SET
+			user_id = EXCLUDED.user_id,
+			type = EXCLUDED.type,
+			status = EXCLUDED.status,
+			progress = EXCLUDED.progress,
+			error = EXCLUDED.error,
+			parent_job_id = EXCLUDED.parent_job_id,
+			label = EXCLUDED.label,
+			payload_json = EXCLUDED.payload_json,
+			result_json = EXCLUDED.result_json,
+			updated_at = EXCLUDED.updated_at,
+			started_at = EXCLUDED.started_at,
+			finished_at = EXCLUDED.finished_at`,
+			job.ID, job.UserID, job.Type, job.Status, job.Progress, job.Error, job.ParentJobID, job.Label, payload, result, job.CreatedAt, job.UpdatedAt, job.StartedAt, job.FinishedAt)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO generation_jobs (
+		id, user_id, type, status, progress, error, parent_job_id, label, payload_json, result_json, created_at, updated_at, started_at, finished_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+		user_id = excluded.user_id,
+		type = excluded.type,
+		status = excluded.status,
+		progress = excluded.progress,
+		error = excluded.error,
+		parent_job_id = excluded.parent_job_id,
+		label = excluded.label,
+		payload_json = excluded.payload_json,
+		result_json = excluded.result_json,
+		updated_at = excluded.updated_at,
+		started_at = excluded.started_at,
+		finished_at = excluded.finished_at`,
+		job.ID, job.UserID, job.Type, job.Status, job.Progress, job.Error, job.ParentJobID, job.Label, payload, result, job.CreatedAt, job.UpdatedAt, job.StartedAt, job.FinishedAt)
+	return err
+}
+
+func (s *SQLStore) GetGenerationJob(ctx context.Context, id string) (GenerationJobRecord, error) {
+	query := fmt.Sprintf(`SELECT id, user_id, type, status, progress, error, COALESCE(parent_job_id,''), COALESCE(label,''), payload_json, result_json, created_at, updated_at, started_at, finished_at
+		FROM generation_jobs WHERE id = %s`, s.placeholder(1))
+	return scanGenerationJob(s.db.QueryRowContext(ctx, query, id))
+}
+
+func (s *SQLStore) ListGenerationJobsByUser(ctx context.Context, userID string, limit int) ([]GenerationJobRecord, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	query := fmt.Sprintf(`SELECT id, user_id, type, status, progress, error, COALESCE(parent_job_id,''), COALESCE(label,''), payload_json, result_json, created_at, updated_at, started_at, finished_at
+		FROM generation_jobs WHERE user_id = %s AND COALESCE(parent_job_id,'') = '' ORDER BY created_at DESC LIMIT %s`, s.placeholder(1), s.placeholder(2))
+	rows, err := s.db.QueryContext(ctx, query, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GenerationJobRecord
+	for rows.Next() {
+		job, err := scanGenerationJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) ListOpenGenerationJobs(ctx context.Context, limit int) ([]GenerationJobRecord, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	query := fmt.Sprintf(`SELECT id, user_id, type, status, progress, error, COALESCE(parent_job_id,''), COALESCE(label,''), payload_json, result_json, created_at, updated_at, started_at, finished_at
+		FROM generation_jobs WHERE status IN (%s, %s) ORDER BY created_at ASC LIMIT %s`, s.placeholder(1), s.placeholder(2), s.placeholder(3))
+	rows, err := s.db.QueryContext(ctx, query, "queued", "running", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GenerationJobRecord
+	for rows.Next() {
+		job, err := scanGenerationJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) DeleteGenerationJob(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM generation_jobs WHERE id = %s", s.placeholder(1)), id)
+	return err
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanGenerationJob(row rowScanner) (GenerationJobRecord, error) {
+	var job GenerationJobRecord
+	var payload, result string
+	var started, finished *time.Time
+	err := row.Scan(&job.ID, &job.UserID, &job.Type, &job.Status, &job.Progress, &job.Error, &job.ParentJobID, &job.Label, &payload, &result, &job.CreatedAt, &job.UpdatedAt, &started, &finished)
+	if err != nil {
+		return GenerationJobRecord{}, mapSQLErr(err)
+	}
+	if payload != "" {
+		job.PayloadJSON = json.RawMessage(payload)
+	}
+	if result != "" {
+		job.ResultJSON = json.RawMessage(result)
+	}
+	job.StartedAt = started
+	job.FinishedAt = finished
+	return job, nil
+}
+
+func (s *SQLStore) CreateUpload(ctx context.Context, up Upload) (Upload, error) {
+	if up.ID == "" {
+		up.ID = newID()
+	}
+	if up.CreatedAt.IsZero() {
+		up.CreatedAt = time.Now().UTC()
+	}
+	query := fmt.Sprintf(`INSERT INTO uploads (id, user_id, filename, content_type, size_bytes, path, created_at)
+		VALUES (%s,%s,%s,%s,%s,%s,%s)`, s.placeholder(1), s.placeholder(2), s.placeholder(3), s.placeholder(4), s.placeholder(5), s.placeholder(6), s.placeholder(7))
+	if _, err := s.db.ExecContext(ctx, query, up.ID, up.UserID, up.Filename, up.ContentType, up.SizeBytes, up.Path, up.CreatedAt); err != nil {
+		return Upload{}, mapSQLErr(err)
+	}
+	return up, nil
+}
+
+func (s *SQLStore) GetUpload(ctx context.Context, id string) (Upload, error) {
+	query := fmt.Sprintf(`SELECT id, user_id, filename, content_type, size_bytes, path, created_at FROM uploads WHERE id = %s`, s.placeholder(1))
+	var up Upload
+	err := s.db.QueryRowContext(ctx, query, id).Scan(&up.ID, &up.UserID, &up.Filename, &up.ContentType, &up.SizeBytes, &up.Path, &up.CreatedAt)
+	if err != nil {
+		return Upload{}, mapSQLErr(err)
+	}
+	return up, nil
+}
+
+func (s *SQLStore) ListUploadsByUser(ctx context.Context, userID string, limit int) ([]Upload, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := fmt.Sprintf(`SELECT id, user_id, filename, content_type, size_bytes, path, created_at FROM uploads WHERE user_id = %s ORDER BY created_at DESC LIMIT %s`, s.placeholder(1), s.placeholder(2))
+	rows, err := s.db.QueryContext(ctx, query, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Upload
+	for rows.Next() {
+		var up Upload
+		if err := rows.Scan(&up.ID, &up.UserID, &up.Filename, &up.ContentType, &up.SizeBytes, &up.Path, &up.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, up)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLStore) DeleteUpload(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM uploads WHERE id = %s", s.placeholder(1)), id)
+	return err
+}
+
+func (s *SQLStore) ListChildGenerationJobs(ctx context.Context, parentJobID string, limit int) ([]GenerationJobRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := fmt.Sprintf(`SELECT id, user_id, type, status, progress, error, COALESCE(parent_job_id,''), COALESCE(label,''), payload_json, result_json, created_at, updated_at, started_at, finished_at
+		FROM generation_jobs WHERE parent_job_id = %s ORDER BY created_at ASC LIMIT %s`, s.placeholder(1), s.placeholder(2))
+	rows, err := s.db.QueryContext(ctx, query, parentJobID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GenerationJobRecord
+	for rows.Next() {
+		job, err := scanGenerationJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job)
+	}
+	return out, rows.Err()
 }

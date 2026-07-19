@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,21 @@ const llmHTTPTimeout = 10 * time.Minute
 
 var defaultHTTPClient = &http.Client{Timeout: llmHTTPTimeout}
 var debugEnabled atomic.Bool
+
+func httpClientFor(proxy string) (*http.Client, error) {
+	proxy = strings.TrimSpace(proxy)
+	if proxy == "" {
+		return defaultHTTPClient, nil
+	}
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return nil, NewUserError("Proxy 地址无效: " + err.Error())
+	}
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(u),
+	}
+	return &http.Client{Timeout: llmHTTPTimeout, Transport: transport}, nil
+}
 
 func SetDebug(enabled bool) {
 	debugEnabled.Store(enabled)
@@ -42,7 +58,7 @@ func Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error
 	}
 }
 
-func postJSON(ctx context.Context, url string, headers map[string]string, payload any) ([]byte, int, error) {
+func postJSON(ctx context.Context, url string, headers map[string]string, payload any, proxy string) ([]byte, int, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, 0, err
@@ -51,6 +67,10 @@ func postJSON(ctx context.Context, url string, headers map[string]string, payloa
 		log.Printf("llm request method=POST url=%s headers=%s content_length=%d payload=%s", url, debugHeaderMap(headers), len(body), debugSnippet(string(body)))
 	}
 
+	client, err := httpClientFor(proxy)
+	if err != nil {
+		return nil, 0, err
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, err
@@ -61,7 +81,7 @@ func postJSON(ctx context.Context, url string, headers map[string]string, payloa
 	}
 
 	started := time.Now()
-	resp, err := defaultHTTPClient.Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		if debugEnabled.Load() {
 			log.Printf("llm request failed method=POST url=%s duration=%s timeout=%s err=%v", url, time.Since(started), llmHTTPTimeout, err)
@@ -88,7 +108,7 @@ func postJSON(ctx context.Context, url string, headers map[string]string, payloa
 	return respBody, resp.StatusCode, nil
 }
 
-func postJSONStream(ctx context.Context, url string, headers map[string]string, payload any) (GenerateResponse, int, []byte, error) {
+func postJSONStream(ctx context.Context, url string, headers map[string]string, payload any, proxy string) (GenerateResponse, int, []byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return GenerateResponse{}, 0, nil, err
@@ -97,6 +117,10 @@ func postJSONStream(ctx context.Context, url string, headers map[string]string, 
 		log.Printf("llm stream request method=POST url=%s headers=%s content_length=%d payload=%s", url, debugHeaderMap(headers), len(body), debugSnippet(string(body)))
 	}
 
+	client, err := httpClientFor(proxy)
+	if err != nil {
+		return GenerateResponse{}, 0, nil, err
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return GenerateResponse{}, 0, nil, err
@@ -108,7 +132,7 @@ func postJSONStream(ctx context.Context, url string, headers map[string]string, 
 	}
 
 	started := time.Now()
-	resp, err := defaultHTTPClient.Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		if debugEnabled.Load() {
 			log.Printf("llm stream request failed method=POST url=%s duration=%s timeout=%s err=%v", url, time.Since(started), llmHTTPTimeout, err)
@@ -143,6 +167,7 @@ func postJSONStream(ctx context.Context, url string, headers map[string]string, 
 			log.Printf("llm stream read failed method=POST url=%s status=%d duration=%s timeout=%s err=%v", url, resp.StatusCode, time.Since(started), llmHTTPTimeout, err)
 			log.Printf("llm debug curl for failed stream read:\n%s", debugCurlCommand(url, headers, body))
 		}
+		// Keep raw SSE body so provider-specific parsers (e.g. OpenAI Responses) can recover.
 		return GenerateResponse{}, resp.StatusCode, raw, err
 	}
 	return response, resp.StatusCode, raw, nil
@@ -151,7 +176,7 @@ func postJSONStream(ctx context.Context, url string, headers map[string]string, 
 type openAIStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
+			Content   any `json:"content"`
 			ToolCalls []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
@@ -163,7 +188,7 @@ type openAIStreamChunk struct {
 			} `json:"tool_calls"`
 		} `json:"delta"`
 		Message struct {
-			Content   string `json:"content"`
+			Content   any `json:"content"`
 			ToolCalls []struct {
 				Function struct {
 					Name      string `json:"name"`
@@ -173,6 +198,9 @@ type openAIStreamChunk struct {
 		} `json:"message"`
 		Text string `json:"text"`
 	} `json:"choices"`
+	// Some proxies emit top-level text fields in SSE data frames.
+	Text    string `json:"text"`
+	Content any    `json:"content"`
 }
 
 type streamToolCall struct {
@@ -207,9 +235,11 @@ func readOpenAIStream(body io.Reader) (GenerateResponse, []byte, error) {
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			return GenerateResponse{Text: text.String()}, []byte(raw.String()), fmt.Errorf("解析 OpenAI 流式响应失败: %w", err)
 		}
+		text.WriteString(anyToString(chunk.Content))
+		text.WriteString(chunk.Text)
 		for _, choice := range chunk.Choices {
-			text.WriteString(choice.Delta.Content)
-			text.WriteString(choice.Message.Content)
+			text.WriteString(anyToString(choice.Delta.Content))
+			text.WriteString(anyToString(choice.Message.Content))
 			text.WriteString(choice.Text)
 			for _, call := range choice.Delta.ToolCalls {
 				toolCall := toolCalls[call.Index]
@@ -245,6 +275,25 @@ func readOpenAIStream(body io.Reader) (GenerateResponse, []byte, error) {
 		}
 		if toolCall.Name != "" {
 			return GenerateResponse{Text: text.String(), ToolName: toolCall.Name, ToolInput: json.RawMessage(toolCall.Arguments.String())}, []byte(raw.String()), nil
+		}
+	}
+	if strings.TrimSpace(text.String()) == "" {
+		// Non-SSE JSON body from some OpenAI-compatible proxies.
+		if recovered, err := parseOpenAIChatCompletionFlexible([]byte(raw.String())); err == nil && (recovered.Text != "" || recovered.ToolName != "") {
+			return recovered, []byte(raw.String()), nil
+		}
+		// Also try stripping "data:" prefixes and concatenating payloads.
+		var joined strings.Builder
+		for _, line := range strings.Split(raw.String(), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "data:") {
+				joined.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			}
+		}
+		if joined.Len() > 0 {
+			if recovered, err := parseOpenAIChatCompletionFlexible([]byte(joined.String())); err == nil && (recovered.Text != "" || recovered.ToolName != "") {
+				return recovered, []byte(raw.String()), nil
+			}
 		}
 	}
 	return GenerateResponse{Text: text.String()}, []byte(raw.String()), nil
