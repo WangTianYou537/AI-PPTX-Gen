@@ -43,6 +43,21 @@ ppt-gen/
 ADDR=:8080 bin/ppt-gen
 ```
 
+发布与部署：
+
+```bash
+# multi-arch release packages
+./scripts/package-release.sh --version 1.0.0
+
+# server first install
+sudo ./scripts/deploy.sh --bin ./bin/ppt-gen --port 18080
+
+# upgrade
+sudo ./scripts/upgrade.sh --artifact ./bin/ppt-gen
+```
+
+详见 `deploy/README.md` 与 `.github/workflows/`。
+
 可选：
 
 - `-store json|sqlite|postgres`
